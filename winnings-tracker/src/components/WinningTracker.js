@@ -1,0 +1,824 @@
+import React, { useEffect, useState } from 'react';
+import { Parser } from 'expr-eval';
+import { loadWinnings, saveWinnings } from '../lib/storage';
+import { defaultSampleWinnings, defaultSelections } from '../lib/mockData';
+import settings from '../lib/settings';
+import './WinningTracker.css';
+
+const STORAGE_KEY = 'WINWIN_WINNINGS';
+const SELECTIONS_KEY = 'WINWIN_SELECTIONS';
+
+const monthColors = [
+  '#FF6B6B', '#4ECDC4', '#45B7D1', '#FFA07A',
+  '#98D8C8', '#F7DC6F', '#BB8FCE', '#85C1E2',
+  '#F8B739', '#52B788', '#E76F51', '#2A9D8F'
+];
+
+const safeEvaluate = (expr) => {
+  try {
+    if (typeof expr === 'number') return expr;
+    const parser = new Parser();
+    const value = parser.evaluate(expr);
+    return Number(value) || 0;
+  } catch {
+    return parseFloat(expr) || 0;
+  }
+};
+
+// Return a YYYY-MM-DD string using local date components (avoids UTC timezone shifts)
+const formatLocalDate = (input) => {
+  if (!input) return '';
+  if (typeof input === 'string') {
+    // If it's an ISO-like string with T, prefer parsing to local components to be safe
+    const isoPart = input.split('T')[0];
+    if (/^\d{4}-\d{2}-\d{2}$/.test(isoPart)) return isoPart;
+    // fallback: try to parse and format
+    const dt = new Date(input);
+    if (!isNaN(dt)) {
+      const y = dt.getFullYear();
+      const m = String(dt.getMonth() + 1).padStart(2, '0');
+      const d = String(dt.getDate()).padStart(2, '0');
+      return `${y}-${m}-${d}`;
+    }
+    return isoPart;
+  }
+  if (input instanceof Date) {
+    const dt = input;
+    const y = dt.getFullYear();
+    const m = String(dt.getMonth() + 1).padStart(2, '0');
+    const d = String(dt.getDate()).padStart(2, '0');
+    return `${y}-${m}-${d}`;
+  }
+  // last resort
+  try {
+    const dt = new Date(input);
+    const y = dt.getFullYear();
+    const m = String(dt.getMonth() + 1).padStart(2, '0');
+    const d = String(dt.getDate()).padStart(2, '0');
+    return `${y}-${m}-${d}`;
+  } catch {
+    return String(input).substring(0, 10);
+  }
+};
+
+const groupByMonth = (items) => {
+  const map = {};
+  items.forEach(e => {
+    const m = e.month || (e.date ? e.date.substring(0, 7) : 'unknown');
+    if (!map[m]) map[m] = [];
+    map[m].push(e);
+  });
+  return map;
+};
+
+const getAvailableYears = (items) => {
+  const currentYear = String(new Date().getFullYear());
+  const years = new Set([currentYear]);
+  items.forEach(e => {
+    const year = e.month ? e.month.substring(0, 4) : (e.date ? e.date.substring(0, 4) : null);
+    if (year) years.add(year);
+  });
+  return Array.from(years).sort().reverse();
+};
+
+const filterByYear = (items, year) => {
+  return items.filter(e => {
+    const itemYear = e.month ? e.month.substring(0, 4) : (e.date ? e.date.substring(0, 4) : null);
+    return itemYear === String(year);
+  });
+};
+
+const parseLocalDate = (dateStr) => {
+  if (!dateStr) return new Date(NaN);
+
+  // If already a Date, just return it.
+  if (dateStr instanceof Date) return dateStr;
+
+  const s = String(dateStr).split('T')[0];
+  const parts = s.split('-');
+
+  // If string looks like YYYY-MM-DD, create a local Date to avoid UTC timezone shifts.
+  if (parts.length === 3 && parts[0].length === 4) {
+    const [y, m, d] = parts;
+    return new Date(Number(y), Number(m) - 1, Number(d));
+  }
+
+  // Fallback: try Date constructor and return it.
+  const dt = new Date(dateStr);
+  return isNaN(dt) ? new Date(NaN) : dt;
+};
+
+const filterByDateRange = (items, startDate, endDate) => {
+  return items.filter(e => {
+    const date = parseLocalDate(e.date);
+    return date >= startDate && date <= endDate;
+  });
+};
+
+const getMonthLabel = (monthStr) => {
+  if (!monthStr) return '';
+  // Accept either 'YYYY-MM' or 'YYYY-MM-DD' or other date-like strings
+  const m = String(monthStr).split('T')[0];
+  const monthOnly = m.length >= 7 ? m.substring(0, 7) : m;
+  const [y, mo] = monthOnly.split('-');
+  const yearNum = Number(y) || new Date().getFullYear();
+  const monthNum = Number(mo) || 1;
+  return new Date(yearNum, monthNum - 1, 1).toLocaleDateString(undefined, { month: 'short' });
+};
+
+export default function WinningTracker() {
+  const currentYear = new Date().getFullYear();
+  const currentMonth = new Date().getMonth() + 1;
+  
+  const [activeTab, setActiveTab] = useState('main');
+  const [winnings, setWinnings] = useState([]);
+  const [selections, setSelections] = useState(defaultSelections);
+  const [selectedYear, setSelectedYear] = useState(String(currentYear));
+  const [showAddForm, setShowAddForm] = useState(false);
+  const [editing, setEditing] = useState(null);
+  const [analysisRange, setAnalysisRange] = useState('month');
+  const [customDateStart, setCustomDateStart] = useState('');
+  const [customDateEnd, setCustomDateEnd] = useState('');
+  const [form, setForm] = useState({
+    date: formatLocalDate(new Date()),
+    platform: '',
+    brand: '',
+    category: '',
+    item: '',
+    price: ''
+  });
+
+  useEffect(() => {
+    (async () => {
+      // Load stored winnings if present; otherwise use default sample data (only in dev mode).
+      const stored = await loadWinnings(STORAGE_KEY);
+      const normalize = (arr) => (arr || []).map(e => {
+        const dateStr = formatLocalDate(e.date || (e.month ? `${e.month}-01` : undefined) || new Date());
+        return {
+          ...e,
+          date: dateStr,
+          month: dateStr.substring(0,7),
+          price: Number(e.price) || 0
+        };
+      });
+
+      if (settings.isDev === true) {
+        // In dev mode, use mock data if no stored data
+        if (stored && stored.length > 0) {
+          const norm = normalize(stored);
+          setWinnings(norm);
+          await saveWinnings(STORAGE_KEY, norm);
+        } else {
+          const normDefault = normalize(defaultSampleWinnings);
+          setWinnings(normDefault);
+          await saveWinnings(STORAGE_KEY, normDefault);
+        }
+      } else {
+        // In production, only use stored data
+        if (stored && stored.length > 0) {
+          const norm = normalize(stored);
+          setWinnings(norm);
+        } else {
+          setWinnings([]);
+        }
+      }
+
+      const storedSelections = await loadWinnings(SELECTIONS_KEY);
+      if (storedSelections) setSelections(storedSelections);
+    })();
+  }, []);
+
+  useEffect(() => {
+    saveWinnings(STORAGE_KEY, winnings);
+  }, [winnings]);
+
+  useEffect(() => {
+    saveWinnings(SELECTIONS_KEY, selections);
+  }, [selections]);
+
+  const addNewSelection = (type, value) => {
+    if (value && !selections[type].includes(value)) {
+      setSelections(prev => ({
+        ...prev,
+        [type]: [...prev[type], value]
+      }));
+    }
+  };
+
+  const handleSubmit = () => {
+    if (!form.date || !form.platform || !form.brand || !form.category || !form.item || !form.price) {
+      alert('Missing fields: Please fill in all fields');
+      return;
+    }
+    
+    addNewSelection('platforms', form.platform);
+    addNewSelection('brands', form.brand);
+    addNewSelection('categories', form.category);
+
+    const price = safeEvaluate(form.price.toString());
+    // normalize date to YYYY-MM-DD string using local components to avoid timezone shifting
+    const dateStr = formatLocalDate(form.date);
+    const newWin = {
+      id: Date.now(),
+      date: dateStr,
+      platform: form.platform,
+      brand: form.brand,
+      category: form.category,
+      item: form.item,
+      price,
+      month: dateStr.substring(0, 7)
+    };
+
+    setWinnings(prev => {
+      const next = [...prev, newWin];
+      return next;
+    });
+
+    // If the month modal is open for the same month, update its items so the UI refreshes
+    if (editing && editing.month === newWin.month) {
+      setEditing(prev => ({ month: prev.month, items: [...(prev.items || []), newWin] }));
+    }
+
+    setForm({ date: formatLocalDate(new Date()), platform: '', brand: '', category: '', item: '', price: '' });
+    setShowAddForm(false);
+  };
+
+  const handleUpdate = () => {
+    if (!editing?.id) return;
+    if (!editing.date || !editing.platform || !editing.brand || !editing.category || !editing.item || !editing.price) {
+      alert('Missing fields: Please fill in all fields');
+      return;
+    }
+    
+    addNewSelection('platforms', editing.platform);
+    addNewSelection('brands', editing.brand);
+    addNewSelection('categories', editing.category);
+
+    const price = safeEvaluate(editing.price.toString());
+    const editingDateStr = formatLocalDate(editing.date);
+    const updated = { ...editing, price, date: editingDateStr, month: editingDateStr.substring(0, 7) };
+
+    // Update winnings and refresh the month modal to show the item under its updated month
+    setWinnings(prev => {
+      const next = prev.map(e => e.id === editing.id ? updated : e);
+      // open the month modal for the updated month with refreshed items
+      const itemsForMonth = next.filter(i => i.month === updated.month);
+      setEditing({ month: updated.month, items: itemsForMonth });
+      return next;
+    });
+  };
+
+  const handleDelete = (id) => {
+    setWinnings(prev => prev.filter(e => e.id !== id));
+  };
+
+  const availableYears = getAvailableYears(winnings);
+  const winningsForYear = filterByYear(winnings, selectedYear);
+  const monthlyData = groupByMonth(winningsForYear);
+
+  const getAnalysisDateRange = () => {
+    const today = new Date();
+    const yearNum = Number(selectedYear) || currentYear;
+    const isCurrentYear = yearNum === currentYear;
+    let startDate, endDate, rangeLabel;
+
+    // If custom date range is set, use it
+    if (customDateStart && customDateEnd) {
+      startDate = new Date(customDateStart);
+      endDate = new Date(customDateEnd);
+      const startMonth = getMonthLabel(customDateStart);
+      const endMonth = getMonthLabel(customDateEnd);
+      rangeLabel = `${startMonth} - ${endMonth}`;
+      return { startDate, endDate, rangeLabel };
+    }
+
+    if (analysisRange === 'month') {
+      if (isCurrentYear) {
+        startDate = new Date(today.getFullYear(), today.getMonth(), 1);
+        endDate = new Date(today.getFullYear(), today.getMonth() + 1, 0);
+        rangeLabel = today.toLocaleDateString(undefined, { month: 'long', year: 'numeric' });
+      } else {
+        startDate = new Date(yearNum, 0, 1);
+        endDate = new Date(yearNum, 0, 31);
+        rangeLabel = `${getMonthLabel(`${yearNum}-01`)} ${yearNum}`;
+      }
+    } else if (analysisRange === 'quarter') {
+      if (isCurrentYear) {
+        const quarter = Math.floor(today.getMonth() / 3);
+        startDate = new Date(today.getFullYear(), quarter * 3, 1);
+        endDate = new Date(today.getFullYear(), quarter * 3 + 3, 0);
+      } else {
+        startDate = new Date(yearNum, 0, 1);
+        endDate = new Date(yearNum, 2, 31);
+      }
+      const startMonth = getMonthLabel(`${yearNum}-01`);
+      const endMonth = getMonthLabel(`${yearNum}-03`);
+      rangeLabel = `${startMonth} - ${endMonth} ${yearNum}`;
+    } else if (analysisRange === 'half') {
+      if (isCurrentYear) {
+        const half = today.getMonth() < 6 ? 0 : 1;
+        startDate = new Date(today.getFullYear(), half * 6, 1);
+        endDate = new Date(today.getFullYear(), half * 6 + 6, 0);
+      } else {
+        startDate = new Date(yearNum, 0, 1);
+        endDate = new Date(yearNum, 5, 30);
+      }
+      const startMonth = getMonthLabel(`${yearNum}-01`);
+      const endMonth = getMonthLabel(`${yearNum}-06`);
+      rangeLabel = `${startMonth} - ${endMonth} ${yearNum}`;
+    } else {
+      startDate = new Date(yearNum, 0, 1);
+      endDate = new Date(yearNum, 11, 31);
+      rangeLabel = String(yearNum);
+    }
+
+    return { startDate, endDate, rangeLabel };
+  };
+
+  const { startDate, endDate, rangeLabel } = getAnalysisDateRange();
+  const filteredForAnalysis = filterByDateRange(winnings, startDate, endDate);
+
+  const analysisData = (() => {
+    const filtered = filteredForAnalysis;
+    const below50 = filtered.filter(e => e.price < 50).length;
+    const between50100 = filtered.filter(e => e.price >= 50 && e.price <= 100).length;
+    const above100 = filtered.filter(e => e.price > 100).length;
+    const total = filtered.length || 1;
+    return {
+      below50: ((below50 / total) * 100).toFixed(1),
+      between50100: ((between50100 / total) * 100).toFixed(1),
+      above100: ((above100 / total) * 100).toFixed(1),
+      totalAmount: filtered.reduce((s, e) => s + Number(e.price), 0).toFixed(2),
+      count: filtered.length
+    };
+  })();
+
+  const displayedMonths = Object.keys(monthlyData).sort();
+
+  const incrementMonth = (monthStr) => {
+    const [y, mo] = (monthStr || '').split('-');
+    const yearNum = Number(y) || currentYear;
+    const monthNum = Number(mo) || 1;
+    const nextMonthNum = monthNum === 12 ? 1 : monthNum + 1;
+    const nextYear = monthNum === 12 ? yearNum + 1 : yearNum;
+    return `${nextYear}-${String(nextMonthNum).padStart(2, '0')}`;
+  };
+
+  const lastMonthInYear = displayedMonths.length > 0
+    ? displayedMonths[displayedMonths.length - 1]
+    : null;
+
+  const addMonth = lastMonthInYear
+    ? (() => {
+        const [y, mo] = lastMonthInYear.split('-');
+        const yearNum = Number(y) || Number(selectedYear) || currentYear;
+        const monthNum = Number(mo) || 1;
+        const nextMonth = Math.min(monthNum + 1, 12);
+        return `${yearNum}-${String(nextMonth).padStart(2, '0')}`;
+      })()
+    : `${selectedYear}-01`;
+
+  const addButtonMonthLabel = 'Next';
+  const addButtonCenterLabel = 'Add another month';
+
+  return (
+    <div className="tracker-container">
+      <div className="tracker-header">
+        <h1 className="tracker-title">🎁 Win Win — Winnings Tracker</h1>
+        <div className="header-controls">
+          <div className="tab-row">
+            <button
+              className={`tab-button ${activeTab === 'main' ? 'tab-active' : ''}`}
+              onClick={() => setActiveTab('main')}
+            >
+              Main
+            </button>
+            <button
+              className={`tab-button ${activeTab === 'analysis' ? 'tab-active' : ''}`}
+              onClick={() => setActiveTab('analysis')}
+            >
+              Analysis
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <div className="tracker-content">
+        {activeTab === 'main' && (
+          <div>
+            <div className="stickers-header-row">
+              <h2 className="stickers-title">Monthly Winnings - {selectedYear}</h2>
+              <div className="year-selector-inline">
+                <select
+                  className="year-dropdown"
+                  value={selectedYear}
+                  onChange={(e) => {
+                    setSelectedYear(String(e.target.value));
+                    setCustomDateStart('');
+                    setCustomDateEnd('');
+                  }}
+                >
+                  {availableYears.map(year => (
+                    <option key={year} value={year}>{year}</option>
+                  ))}
+                </select>
+              </div>
+            </div>
+
+            <div className="month-sticker-grid">
+              {displayedMonths.map((monthStr, index) => {
+                const items = monthlyData[monthStr] || [];
+                const total = items.reduce((s, i) => s + i.price, 0);
+                const [y, mo] = (monthStr || '').split('-');
+                const monthIndex = (Number(mo) ? Number(mo) - 1 : 0);
+                const color = monthColors[monthIndex];
+                const monthName = new Date(Number(y) || currentYear, monthIndex, 1).toLocaleDateString(undefined, { month: 'short' });
+                const isCurrentMonth = monthStr === `${currentYear}-${String(currentMonth).padStart(2, '0')}` && String(selectedYear) === String(currentYear);
+
+                if (items.length > 0) {
+                  return (
+                    <div key={monthStr} className="sticker-wrapper">
+                      <button
+                        className="month-sticker"
+                        style={{ backgroundColor: color }}
+                        onClick={() => setEditing({ month: monthStr, items })}
+                      >
+                        <div className="sticker-month">{monthName}</div>
+                        <div className="sticker-amount">${Math.round(total)}</div>
+                        <div className="sticker-count">{items.length}</div>
+                      </button>
+                      {/* small per-sticker add button removed in favor of appended add control */}
+                    </div>
+                  );
+                }
+
+                if (isCurrentMonth) {
+                  return (
+                    <div key={monthStr} className="sticker-wrapper">
+                      <button
+                        className="add-btn"
+                        onClick={() => {
+                          setEditing(null);
+                          setShowAddForm(true);
+                          setForm(f => ({ ...f, date: monthStr + '-01' }));
+                        }}
+                      >
+                        <div className="sticker-month">{monthName}</div>
+                        <div className="add-center">+ Add Winning</div>
+                      </button>
+                    </div>
+                  );
+                }
+
+                return null;
+              })}
+              {/* Add button appended after latest sticker */}
+              <div className="sticker-wrapper">
+                <button
+                  className="add-btn add-btn-dotted"
+                  onClick={() => {
+                    setEditing(null);
+                    setShowAddForm(true);
+                    setForm(f => ({ ...f, date: addMonth + '-01' }));
+                  }}
+                >
+                  <div className="sticker-month">{addButtonMonthLabel}</div>
+                  <div className="add-center">{addButtonCenterLabel}</div>
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {activeTab === 'analysis' && (
+          <div className="analysis-section">
+            <div className="analysis-controls">
+              <label className="analysis-label">Period:</label>
+              <div className="quick-select-buttons">
+                <button
+                  className={`quick-select ${analysisRange === 'month' ? 'active' : ''}`}
+                  onClick={() => setAnalysisRange('month')}
+                >
+                  {String(selectedYear) === String(currentYear) ? 'Current Month' : 'First Month'}
+                </button>
+                <button
+                  className={`quick-select ${analysisRange === 'quarter' ? 'active' : ''}`}
+                  onClick={() => setAnalysisRange('quarter')}
+                >
+                  {String(selectedYear) === String(currentYear) ? 'Current Quarter' : 'First Quarter'}
+                </button>
+                <button
+                  className={`quick-select ${analysisRange === 'half' ? 'active' : ''}`}
+                  onClick={() => setAnalysisRange('half')}
+                >
+                  {String(selectedYear) === String(currentYear) ? 'Current Half' : 'First Half'}
+                </button>
+                <button
+                  className={`quick-select ${analysisRange === 'year' ? 'active' : ''}`}
+                  onClick={() => setAnalysisRange('year')}
+                >
+                  Full Year
+                </button>
+              </div>
+            </div>
+
+            <div className="analysis-controls">
+              <label className="analysis-label">Custom Date Range:</label>
+              <div className="date-range-inputs">
+                <div className="date-input-group">
+                  <label className="date-label">From:</label>
+                  <input
+                    type="date"
+                    className="date-input"
+                    value={customDateStart}
+                    onChange={(e) => setCustomDateStart(e.target.value)}
+                  />
+                </div>
+                <div className="date-input-group">
+                  <label className="date-label">To:</label>
+                  <input
+                    type="date"
+                    className="date-input"
+                    value={customDateEnd}
+                    onChange={(e) => setCustomDateEnd(e.target.value)}
+                  />
+                </div>
+                {(customDateStart || customDateEnd) && (
+                  <button
+                    className="clear-date-btn"
+                    onClick={() => {
+                      setCustomDateStart('');
+                      setCustomDateEnd('');
+                    }}
+                  >
+                    Clear
+                  </button>
+                )}
+              </div>
+            </div>
+
+            <div className="analysis-range-display">
+              <span className="range-label">Showing: {rangeLabel}</span>
+            </div>
+
+            <div className="analysis-card">
+              <div className="analysis-header">
+                <span className="chart-icon">📊</span>
+                <span className="analysis-label-text">Total Value</span>
+              </div>
+              <div className="analysis-total">${analysisData.totalAmount}</div>
+              <div className="analysis-count">{analysisData.count} items</div>
+            </div>
+
+            <h3 className="analysis-title">Price Distribution</h3>
+
+            <div className="dist-card">
+              <div className="dist-row">
+                <span className="dist-label">Below $50</span>
+                <span className="dist-percent">{analysisData.below50}%</span>
+              </div>
+              <div className="progress-bg">
+                <div
+                  className="progress-fill"
+                  style={{
+                    width: `${analysisData.below50}%`,
+                    backgroundColor: '#16a34a'
+                  }}
+                />
+              </div>
+            </div>
+
+            <div className="dist-card">
+              <div className="dist-row">
+                <span className="dist-label">$50 - $100</span>
+                <span className="dist-percent">{analysisData.between50100}%</span>
+              </div>
+              <div className="progress-bg">
+                <div
+                  className="progress-fill"
+                  style={{
+                    width: `${analysisData.between50100}%`,
+                    backgroundColor: '#d97706'
+                  }}
+                />
+              </div>
+            </div>
+
+            <div className="dist-card">
+              <div className="dist-row">
+                <span className="dist-label">Above $100</span>
+                <span className="dist-percent">{analysisData.above100}%</span>
+              </div>
+              <div className="progress-bg">
+                <div
+                  className="progress-fill"
+                  style={{
+                    width: `${analysisData.above100}%`,
+                    backgroundColor: '#dc2626'
+                  }}
+                />
+              </div>
+            </div>
+          </div>
+        )}
+      </div>
+
+      {(showAddForm || (editing && editing.id)) && (
+        <div className="modal-overlay">
+          <div className="modal-content">
+            <div className="modal-header">
+              <h2 className="modal-title">{editing?.id ? 'Edit Winning' : 'Add New Winning'}</h2>
+              <button
+                className="modal-close"
+                onClick={() => {
+                  setShowAddForm(false);
+                  setEditing(null);
+                }}
+              >
+                ✕
+              </button>
+            </div>
+
+            <div className="modal-body">
+              <div className="form-group">
+                <label className="form-label">Date</label>
+                <input
+                  type="date"
+                  className="form-input"
+                  value={editing?.date || form.date}
+                  onChange={e => editing ? setEditing({ ...editing, date: e.target.value }) : setForm({ ...form, date: e.target.value })}
+                />
+              </div>
+
+              <div className="form-group">
+                <label className="form-label">Platform</label>
+                <datalist id="platforms-list">
+                  {selections.platforms.map(p => (
+                    <option key={p} value={p} />
+                  ))}
+                </datalist>
+                <input
+                  type="text"
+                  className="form-input"
+                  placeholder="Select or type new platform"
+                  list="platforms-list"
+                  value={editing?.platform || form.platform}
+                  onChange={e => editing ? setEditing({ ...editing, platform: e.target.value }) : setForm({ ...form, platform: e.target.value })}
+                />
+              </div>
+
+              <div className="form-group">
+                <label className="form-label">Brand</label>
+                <datalist id="brands-list">
+                  {selections.brands.map(b => (
+                    <option key={b} value={b} />
+                  ))}
+                </datalist>
+                <input
+                  type="text"
+                  className="form-input"
+                  placeholder="Select or type new brand"
+                  list="brands-list"
+                  value={editing?.brand || form.brand}
+                  onChange={e => editing ? setEditing({ ...editing, brand: e.target.value }) : setForm({ ...form, brand: e.target.value })}
+                />
+              </div>
+
+              <div className="form-group">
+                <label className="form-label">Category</label>
+                <datalist id="categories-list">
+                  {selections.categories.map(c => (
+                    <option key={c} value={c} />
+                  ))}
+                </datalist>
+                <input
+                  type="text"
+                  className="form-input"
+                  placeholder="Select or type new category"
+                  list="categories-list"
+                  value={editing?.category || form.category}
+                  onChange={e => editing ? setEditing({ ...editing, category: e.target.value }) : setForm({ ...form, category: e.target.value })}
+                />
+              </div>
+
+              <div className="form-group">
+                <label className="form-label">Item Name</label>
+                <input
+                  type="text"
+                  className="form-input"
+                  value={editing?.item || form.item}
+                  onChange={e => editing ? setEditing({ ...editing, item: e.target.value }) : setForm({ ...form, item: e.target.value })}
+                  placeholder="What did you win?"
+                />
+              </div>
+
+              <div className="form-group">
+                <label className="form-label">Price</label>
+                <input
+                  type="number"
+                  step="0.01"
+                  className="form-input"
+                  value={editing?.price || form.price}
+                  onChange={e => {
+                    const value = e.target.value;
+                    editing
+                      ? setEditing({ ...editing, price: value })
+                      : setForm({ ...form, price: value });
+                  }}
+                  placeholder="0.00"
+                />
+                {(editing?.price || form.price) !== '' && (
+                  <div className="form-hint">Result: ${safeEvaluate((editing?.price || form.price).toString()).toFixed(2)}</div>
+                )}
+              </div>
+
+              <div className="form-actions">
+                <button 
+                  className="action-btn action-btn-primary" 
+                  onClick={editing?.id ? handleUpdate : handleSubmit}
+                >
+                  {editing?.id ? 'Update' : 'Add'}
+                </button>
+                <button
+                  className="action-btn action-btn-secondary"
+                  onClick={() => {
+                    setShowAddForm(false);
+                    setEditing(null);
+                  }}
+                >
+                  Cancel
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {editing?.items && Array.isArray(editing.items) && (
+        <div className="modal-overlay">
+          <div className="modal-content">
+            <div className="modal-header">
+              <h2 className="modal-title">{new Date(editing.month + '-01').toLocaleDateString(undefined, { month: 'long', year: 'numeric' })}</h2>
+              <button
+                className="modal-close"
+                onClick={() => setEditing(null)}
+              >
+                ✕
+              </button>
+            </div>
+
+            <div className="modal-body">
+              <div className="items-list">
+                {editing.items.map(item => (
+                  <div key={String(item.id)} className="item-row">
+                    <div className="item-info">
+                      <div className="item-title">{item.item}</div>
+                      <div className="item-meta">{item.category} • {item.brand} • {item.platform}</div>
+                    </div>
+                    <div className="item-actions">
+                      <span className="item-price">${Number(item.price).toFixed(2)}</span>
+                      <button
+                        className="icon-button"
+                        onClick={() => setEditing(item)}
+                      >
+                        ✏️
+                      </button>
+                      <button
+                        className="icon-button"
+                        onClick={() => {
+                          handleDelete(item.id);
+                          setEditing({ month: editing.month, items: editing.items.filter(i => i.id !== item.id) });
+                        }}
+                      >
+                        🗑️
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+              <button
+                className="action-btn action-btn-primary"
+                onClick={() => {
+                  setEditing(null);
+                  setShowAddForm(true);
+                  setForm({ date: editing.month + '-01', platform: '', brand: '', category: '', item: '', price: '' });
+                }}
+                style={{ width: '100%', marginBottom: '8px' }}
+              >
+                + Add Winning
+              </button>
+
+              <button
+                className="action-btn action-btn-secondary"
+                onClick={() => setEditing(null)}
+                style={{ width: '100%', marginTop: '12px' }}
+              >
+                Close
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
