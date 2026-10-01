@@ -14,14 +14,20 @@ const monthColors = [
   '#F8B739', '#52B788', '#E76F51', '#2A9D8F'
 ];
 
-const safeEvaluate = (expr) => {
+const priceParser = new Parser();
+
+// Evaluate a price expression like "20+15" or "3*12.5".
+// Returns a number, or null if the input is empty or not a valid arithmetic expression.
+// Only digits, whitespace and + - * / ( ) . are allowed, so nothing else reaches the parser.
+const evaluatePrice = (expr) => {
+  if (typeof expr === 'number') return Number.isFinite(expr) ? expr : null;
+  const s = String(expr ?? '').trim();
+  if (!s || !/^[\d\s+\-*/().]+$/.test(s)) return null;
   try {
-    if (typeof expr === 'number') return expr;
-    const parser = new Parser();
-    const value = parser.evaluate(expr);
-    return Number(value) || 0;
+    const value = Number(priceParser.evaluate(s));
+    return Number.isFinite(value) ? Math.round(value * 100) / 100 : null;
   } catch {
-    return parseFloat(expr) || 0;
+    return null;
   }
 };
 
@@ -133,12 +139,16 @@ export default function WinningTracker() {
   const [activeTab, setActiveTab] = useState('main');
   const [winnings, setWinnings] = useState([]);
   const [selections, setSelections] = useState(defaultSelections);
+  // Becomes true once stored data has been loaded; saves are skipped until then
+  // so the initial default state never overwrites what's in storage.
+  const [loaded, setLoaded] = useState(false);
   const [selectedYear, setSelectedYear] = useState(String(currentYear));
   const [showAddForm, setShowAddForm] = useState(false);
   const [editing, setEditing] = useState(null);
   const [analysisRange, setAnalysisRange] = useState('month');
   const [customDateStart, setCustomDateStart] = useState('');
   const [customDateEnd, setCustomDateEnd] = useState('');
+  const [editingSelection, setEditingSelection] = useState(null); // { type, index, value }
   const [form, setForm] = useState({
     date: formatLocalDate(new Date()),
     platform: '',
@@ -184,17 +194,30 @@ export default function WinningTracker() {
       }
 
       const storedSelections = await loadWinnings(SELECTIONS_KEY);
-      if (storedSelections) setSelections(storedSelections);
+      // loadWinnings returns [] when nothing is stored, so check the shape before using it
+      if (
+        storedSelections &&
+        !Array.isArray(storedSelections) &&
+        Array.isArray(storedSelections.platforms) &&
+        Array.isArray(storedSelections.brands) &&
+        Array.isArray(storedSelections.categories)
+      ) {
+        setSelections(storedSelections);
+      }
+
+      setLoaded(true);
     })();
   }, []);
 
   useEffect(() => {
+    if (!loaded) return;
     saveWinnings(STORAGE_KEY, winnings);
-  }, [winnings]);
+  }, [winnings, loaded]);
 
   useEffect(() => {
+    if (!loaded) return;
     saveWinnings(SELECTIONS_KEY, selections);
-  }, [selections]);
+  }, [selections, loaded]);
 
   const addNewSelection = (type, value) => {
     if (value && !selections[type].includes(value)) {
@@ -203,6 +226,31 @@ export default function WinningTracker() {
         [type]: [...prev[type], value]
       }));
     }
+  };
+
+  const addSelection = (type, value) => {
+    if (value && !selections[type].includes(value)) {
+      setSelections(prev => ({
+        ...prev,
+        [type]: [...prev[type], value]
+      }));
+    }
+  };
+
+  const updateSelection = (type, index, newValue) => {
+    if (newValue && !selections[type].some((item, i) => i !== index && item === newValue)) {
+      setSelections(prev => ({
+        ...prev,
+        [type]: prev[type].map((item, i) => i === index ? newValue : item)
+      }));
+    }
+  };
+
+  const deleteSelection = (type, index) => {
+    setSelections(prev => ({
+      ...prev,
+      [type]: prev[type].filter((_, i) => i !== index)
+    }));
   };
 
   const handleSubmit = () => {
@@ -215,7 +263,11 @@ export default function WinningTracker() {
     addNewSelection('brands', form.brand);
     addNewSelection('categories', form.category);
 
-    const price = safeEvaluate(form.price.toString());
+    const price = evaluatePrice(form.price);
+    if (price === null) {
+      alert('Invalid price: use numbers and + - * / ( ), e.g. 20+15');
+      return;
+    }
     // normalize date to YYYY-MM-DD string using local components to avoid timezone shifting
     const dateStr = formatLocalDate(form.date);
     const newWin = {
@@ -254,7 +306,11 @@ export default function WinningTracker() {
     addNewSelection('brands', editing.brand);
     addNewSelection('categories', editing.category);
 
-    const price = safeEvaluate(editing.price.toString());
+    const price = evaluatePrice(editing.price);
+    if (price === null) {
+      alert('Invalid price: use numbers and + - * / ( ), e.g. 20+15');
+      return;
+    }
     const editingDateStr = formatLocalDate(editing.date);
     const updated = { ...editing, price, date: editingDateStr, month: editingDateStr.substring(0, 7) };
 
@@ -398,6 +454,12 @@ export default function WinningTracker() {
               onClick={() => setActiveTab('analysis')}
             >
               Analysis
+            </button>
+            <button
+              className={`tab-button ${activeTab === 'settings' ? 'tab-active' : ''}`}
+              onClick={() => setActiveTab('settings')}
+            >
+              Settings
             </button>
           </div>
         </div>
@@ -621,6 +683,181 @@ export default function WinningTracker() {
             </div>
           </div>
         )}
+
+        {activeTab === 'settings' && (
+          <div className="settings-section">
+            <h2 className="settings-title">Manage Selections</h2>
+            <p className="settings-description">Add, edit, or delete platforms, brands, and categories used in your winnings.</p>
+
+            <div className="settings-group">
+              <h3 className="settings-group-title">Platforms</h3>
+              <div className="settings-list">
+                {selections.platforms.map((platform, index) => (
+                  <div key={index} className="settings-item">
+                    {editingSelection && editingSelection.type === 'platforms' && editingSelection.index === index ? (
+                      <input
+                        type="text"
+                        className="settings-input"
+                        value={editingSelection.value}
+                        onChange={(e) => setEditingSelection({ ...editingSelection, value: e.target.value })}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter') {
+                            updateSelection('platforms', index, editingSelection.value);
+                            setEditingSelection(null);
+                          } else if (e.key === 'Escape') {
+                            setEditingSelection(null);
+                          }
+                        }}
+                        autoFocus
+                      />
+                    ) : (
+                      <span className="settings-item-text">{platform}</span>
+                    )}
+                    <div className="settings-item-actions">
+                      <button
+                        className="settings-btn settings-btn-edit"
+                        onClick={() => setEditingSelection({ type: 'platforms', index, value: platform })}
+                      >
+                        ✏️
+                      </button>
+                      <button
+                        className="settings-btn settings-btn-delete"
+                        onClick={() => deleteSelection('platforms', index)}
+                      >
+                        🗑️
+                      </button>
+                    </div>
+                  </div>
+                ))}
+                <div className="settings-add">
+                  <input
+                    type="text"
+                    className="settings-input"
+                    placeholder="Add new platform"
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter' && e.target.value.trim()) {
+                        addSelection('platforms', e.target.value.trim());
+                        e.target.value = '';
+                      }
+                    }}
+                  />
+                </div>
+              </div>
+            </div>
+
+            <div className="settings-group">
+              <h3 className="settings-group-title">Brands</h3>
+              <div className="settings-list">
+                {selections.brands.map((brand, index) => (
+                  <div key={index} className="settings-item">
+                    {editingSelection && editingSelection.type === 'brands' && editingSelection.index === index ? (
+                      <input
+                        type="text"
+                        className="settings-input"
+                        value={editingSelection.value}
+                        onChange={(e) => setEditingSelection({ ...editingSelection, value: e.target.value })}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter') {
+                            updateSelection('brands', index, editingSelection.value);
+                            setEditingSelection(null);
+                          } else if (e.key === 'Escape') {
+                            setEditingSelection(null);
+                          }
+                        }}
+                        autoFocus
+                      />
+                    ) : (
+                      <span className="settings-item-text">{brand}</span>
+                    )}
+                    <div className="settings-item-actions">
+                      <button
+                        className="settings-btn settings-btn-edit"
+                        onClick={() => setEditingSelection({ type: 'brands', index, value: brand })}
+                      >
+                        ✏️
+                      </button>
+                      <button
+                        className="settings-btn settings-btn-delete"
+                        onClick={() => deleteSelection('brands', index)}
+                      >
+                        🗑️
+                      </button>
+                    </div>
+                  </div>
+                ))}
+                <div className="settings-add">
+                  <input
+                    type="text"
+                    className="settings-input"
+                    placeholder="Add new brand"
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter' && e.target.value.trim()) {
+                        addSelection('brands', e.target.value.trim());
+                        e.target.value = '';
+                      }
+                    }}
+                  />
+                </div>
+              </div>
+            </div>
+
+            <div className="settings-group">
+              <h3 className="settings-group-title">Categories</h3>
+              <div className="settings-list">
+                {selections.categories.map((category, index) => (
+                  <div key={index} className="settings-item">
+                    {editingSelection && editingSelection.type === 'categories' && editingSelection.index === index ? (
+                      <input
+                        type="text"
+                        className="settings-input"
+                        value={editingSelection.value}
+                        onChange={(e) => setEditingSelection({ ...editingSelection, value: e.target.value })}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter') {
+                            updateSelection('categories', index, editingSelection.value);
+                            setEditingSelection(null);
+                          } else if (e.key === 'Escape') {
+                            setEditingSelection(null);
+                          }
+                        }}
+                        autoFocus
+                      />
+                    ) : (
+                      <span className="settings-item-text">{category}</span>
+                    )}
+                    <div className="settings-item-actions">
+                      <button
+                        className="settings-btn settings-btn-edit"
+                        onClick={() => setEditingSelection({ type: 'categories', index, value: category })}
+                      >
+                        ✏️
+                      </button>
+                      <button
+                        className="settings-btn settings-btn-delete"
+                        onClick={() => deleteSelection('categories', index)}
+                      >
+                        🗑️
+                      </button>
+                    </div>
+                  </div>
+                ))}
+                <div className="settings-add">
+                  <input
+                    type="text"
+                    className="settings-input"
+                    placeholder="Add new category"
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter' && e.target.value.trim()) {
+                        addSelection('categories', e.target.value.trim());
+                        e.target.value = '';
+                      }
+                    }}
+                  />
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
       </div>
 
       {(showAddForm || (editing && editing.id)) && (
@@ -715,21 +952,26 @@ export default function WinningTracker() {
               <div className="form-group">
                 <label className="form-label">Price</label>
                 <input
-                  type="number"
-                  step="0.01"
+                  type="text"
+                  autoComplete="off"
                   className="form-input"
-                  value={editing?.price || form.price}
+                  value={editing ? String(editing.price ?? '') : form.price}
                   onChange={e => {
                     const value = e.target.value;
                     editing
                       ? setEditing({ ...editing, price: value })
                       : setForm({ ...form, price: value });
                   }}
-                  placeholder="0.00"
+                  placeholder="0.00 or 20+15"
                 />
-                {(editing?.price || form.price) !== '' && (
-                  <div className="form-hint">Result: ${safeEvaluate((editing?.price || form.price).toString()).toFixed(2)}</div>
-                )}
+                {(() => {
+                  const raw = editing ? String(editing.price ?? '') : form.price;
+                  if (raw.trim() === '') return null;
+                  const value = evaluatePrice(raw);
+                  return value === null
+                    ? <div className="form-hint" style={{ color: '#dc2626' }}>Invalid expression</div>
+                    : <div className="form-hint">Result: ${value.toFixed(2)}</div>;
+                })()}
               </div>
 
               <div className="form-actions">
