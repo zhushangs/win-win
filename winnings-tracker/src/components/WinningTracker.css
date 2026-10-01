@@ -790,3 +790,21 @@
 .settings-add {
   margin-top: 8px;
 }
+
+/* Backup */
+.backup-description {
+  margin-bottom: 4px;
+}
+
+.backup-import-label {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+}
+
+.storage-status {
+  margin-top: 10px;
+  font-size: 12px;
+  color: #64748b;
+}

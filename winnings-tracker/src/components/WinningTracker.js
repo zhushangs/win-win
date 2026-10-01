@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { Parser } from 'expr-eval';
-import { loadWinnings, saveWinnings } from '../lib/storage';
+import { loadWinnings, saveWinnings, requestPersistentStorage } from '../lib/storage';
 import { defaultSampleWinnings, defaultSelections } from '../lib/mockData';
 import settings from '../lib/settings';
 import './WinningTracker.css';
@@ -66,6 +66,21 @@ const formatLocalDate = (input) => {
     return String(input).substring(0, 10);
   }
 };
+
+// Clean up items from storage or a backup file: consistent date/month strings and numeric price.
+const normalizeWinnings = (arr) => (arr || []).map(e => {
+  const dateStr = formatLocalDate(e.date || (e.month ? `${e.month}-01` : undefined) || new Date());
+  return {
+    ...e,
+    date: dateStr,
+    month: dateStr.substring(0, 7),
+    price: Number(e.price) || 0
+  };
+});
+
+const isValidSelections = (v) =>
+  v && !Array.isArray(v) &&
+  Array.isArray(v.platforms) && Array.isArray(v.brands) && Array.isArray(v.categories);
 
 const groupByMonth = (items) => {
   const map = {};
@@ -142,6 +157,7 @@ export default function WinningTracker() {
   // Becomes true once stored data has been loaded; saves are skipped until then
   // so the initial default state never overwrites what's in storage.
   const [loaded, setLoaded] = useState(false);
+  const [storagePersistent, setStoragePersistent] = useState(null); // true | false | null (unknown)
   const [selectedYear, setSelectedYear] = useState(String(currentYear));
   const [showAddForm, setShowAddForm] = useState(false);
   const [editing, setEditing] = useState(null);
@@ -162,15 +178,7 @@ export default function WinningTracker() {
     (async () => {
       // Load stored winnings if present; otherwise use default sample data (only in dev mode).
       const stored = await loadWinnings(STORAGE_KEY);
-      const normalize = (arr) => (arr || []).map(e => {
-        const dateStr = formatLocalDate(e.date || (e.month ? `${e.month}-01` : undefined) || new Date());
-        return {
-          ...e,
-          date: dateStr,
-          month: dateStr.substring(0,7),
-          price: Number(e.price) || 0
-        };
-      });
+      const normalize = normalizeWinnings;
 
       if (settings.isDev === true) {
         // In dev mode, use mock data if no stored data
@@ -195,17 +203,12 @@ export default function WinningTracker() {
 
       const storedSelections = await loadWinnings(SELECTIONS_KEY);
       // loadWinnings returns [] when nothing is stored, so check the shape before using it
-      if (
-        storedSelections &&
-        !Array.isArray(storedSelections) &&
-        Array.isArray(storedSelections.platforms) &&
-        Array.isArray(storedSelections.brands) &&
-        Array.isArray(storedSelections.categories)
-      ) {
+      if (isValidSelections(storedSelections)) {
         setSelections(storedSelections);
       }
 
       setLoaded(true);
+      setStoragePersistent(await requestPersistentStorage());
     })();
   }, []);
 
@@ -328,6 +331,52 @@ export default function WinningTracker() {
     setWinnings(prev => prev.filter(e => e.id !== id));
   };
 
+  // Download all data as a JSON file the user can keep somewhere safe.
+  const exportBackup = () => {
+    const backup = {
+      app: 'win-win',
+      version: 1,
+      exportedAt: new Date().toISOString(),
+      winnings,
+      selections
+    };
+    const blob = new Blob([JSON.stringify(backup, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `win-win-backup-${formatLocalDate(new Date())}.json`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+  };
+
+  // Merge a backup file into current data. Items with the same id are replaced by the
+  // backup's version; everything else is kept, so importing never deletes anything.
+  const importBackup = async (file) => {
+    if (!file) return;
+    try {
+      const data = JSON.parse(await file.text());
+      const items = Array.isArray(data) ? data : data?.winnings;
+      if (!Array.isArray(items)) throw new Error('No winnings found in file');
+
+      const imported = normalizeWinnings(items.filter(i => i && i.id != null));
+      const importedIds = new Set(imported.map(i => i.id));
+      setWinnings(prev => [...prev.filter(e => !importedIds.has(e.id)), ...imported]);
+
+      if (isValidSelections(data?.selections)) {
+        setSelections(prev => ({
+          platforms: [...new Set([...prev.platforms, ...data.selections.platforms])],
+          brands: [...new Set([...prev.brands, ...data.selections.brands])],
+          categories: [...new Set([...prev.categories, ...data.selections.categories])]
+        }));
+      }
+      alert(`Imported ${imported.length} item${imported.length === 1 ? '' : 's'}.`);
+    } catch (e) {
+      alert(`Import failed: ${e.message}`);
+    }
+  };
+
   const availableYears = getAvailableYears(winnings);
   const winningsForYear = filterByYear(winnings, selectedYear);
   const monthlyData = groupByMonth(winningsForYear);
@@ -410,15 +459,6 @@ export default function WinningTracker() {
   })();
 
   const displayedMonths = Object.keys(monthlyData).sort();
-
-  const incrementMonth = (monthStr) => {
-    const [y, mo] = (monthStr || '').split('-');
-    const yearNum = Number(y) || currentYear;
-    const monthNum = Number(mo) || 1;
-    const nextMonthNum = monthNum === 12 ? 1 : monthNum + 1;
-    const nextYear = monthNum === 12 ? yearNum + 1 : yearNum;
-    return `${nextYear}-${String(nextMonthNum).padStart(2, '0')}`;
-  };
 
   const lastMonthInYear = displayedMonths.length > 0
     ? displayedMonths[displayedMonths.length - 1]
@@ -686,6 +726,35 @@ export default function WinningTracker() {
 
         {activeTab === 'settings' && (
           <div className="settings-section">
+            <div className="settings-group">
+              <h3 className="settings-group-title">Backup</h3>
+              <p className="settings-description backup-description">
+                Your data is stored only on this device. Export a backup now and then, and import it to restore or move to another device.
+              </p>
+              <div className="form-actions">
+                <button className="action-btn action-btn-primary" onClick={exportBackup}>
+                  Export backup
+                </button>
+                <label className="action-btn action-btn-secondary backup-import-label">
+                  Import backup
+                  <input
+                    type="file"
+                    accept="application/json,.json"
+                    style={{ display: 'none' }}
+                    onChange={(e) => {
+                      importBackup(e.target.files?.[0]);
+                      e.target.value = '';
+                    }}
+                  />
+                </label>
+              </div>
+              <div className="storage-status">
+                {storagePersistent === true && 'Storage: persistent ✓'}
+                {storagePersistent === false && 'Storage: the browser may clear data if space runs low. Add to Home Screen and keep backups.'}
+                {storagePersistent === null && 'Storage: persistence status unknown'}
+              </div>
+            </div>
+
             <h2 className="settings-title">Manage Selections</h2>
             <p className="settings-description">Add, edit, or delete platforms, brands, and categories used in your winnings.</p>
 
