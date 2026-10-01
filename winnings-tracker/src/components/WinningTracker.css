@@ -191,7 +191,7 @@
   padding: 6px 8px;
   border: 1px solid #e2e8f0;
   border-radius: 6px;
-  font-size: 13px;
+  font-size: 16px;
   transition: border-color 0.2s ease;
 }
 
@@ -486,7 +486,7 @@
   border: 1px solid #e2e8f0;
   border-radius: 8px;
   padding: 10px;
-  font-size: 14px;
+  font-size: 16px; /* 16px+ stops iOS Safari from zooming in on focus */
   box-sizing: border-box;
   transition: border-color 0.2s ease;
   margin-bottom: 6px;
@@ -679,11 +679,23 @@
   }
 
   .sticker-wrapper {
-    min-height: 70px;
+    min-height: 88px;
   }
 
-  .month-sticker {
-    height: 70px;
+  .month-sticker,
+  .add-btn {
+    height: 88px;
+    padding: 8px 4px;
+    justify-content: center;
+  }
+
+  .add-btn .sticker-month {
+    font-size: 16px;
+  }
+
+  .add-center {
+    font-size: 12px;
+    margin-top: 4px;
   }
 
   .sticker-month {
@@ -774,10 +786,11 @@
 
 .settings-input {
   width: 100%;
+  box-sizing: border-box;
   border: 1px solid #e2e8f0;
   border-radius: 6px;
   padding: 8px 10px;
-  font-size: 14px;
+  font-size: 16px;
   transition: border-color 0.2s ease;
 }
 
@@ -807,4 +820,28 @@
   margin-top: 10px;
   font-size: 12px;
   color: #64748b;
+}
+
+/* Suggestion chips under Platform / Brand / Category */
+.chip-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 4px;
+}
+
+.chip {
+  border: 1px solid #ddd6fe;
+  background-color: #f5f3ff;
+  color: #5b21b6;
+  border-radius: 999px;
+  padding: 6px 12px;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.chip:active {
+  background-color: #7c3aed;
+  color: #fff;
 }

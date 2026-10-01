@@ -152,6 +152,38 @@ const getMonthLabel = (monthStr) => {
   return new Date(yearNum, monthNum - 1, 1).toLocaleDateString(undefined, { month: 'short' });
 };
 
+// Text input with tappable suggestion chips underneath. Replaces <datalist>, which
+// iOS Safari only shows as a single keyboard suggestion instead of a list.
+function ComboInput({ value, onChange, options, placeholder }) {
+  const text = value || '';
+  const q = text.trim().toLowerCase();
+  const exact = options.some(o => o.toLowerCase() === q);
+  const matches = exact ? [] : options.filter(o => o.toLowerCase().includes(q));
+  return (
+    <>
+      <input
+        type="text"
+        className="form-input"
+        autoComplete="off"
+        autoCorrect="off"
+        autoCapitalize="words"
+        placeholder={placeholder}
+        value={text}
+        onChange={e => onChange(e.target.value)}
+      />
+      {matches.length > 0 && (
+        <div className="chip-row">
+          {matches.map(o => (
+            <button key={o} type="button" className="chip" onClick={() => onChange(o)}>
+              {o}
+            </button>
+          ))}
+        </div>
+      )}
+    </>
+  );
+}
+
 export default function WinningTracker() {
   const currentYear = new Date().getFullYear();
   const currentMonth = new Date().getMonth() + 1;
@@ -963,52 +995,31 @@ export default function WinningTracker() {
 
               <div className="form-group">
                 <label className="form-label">Platform</label>
-                <datalist id="platforms-list">
-                  {selections.platforms.map(p => (
-                    <option key={p} value={p} />
-                  ))}
-                </datalist>
-                <input
-                  type="text"
-                  className="form-input"
+                <ComboInput
+                  value={editing ? editing.platform : form.platform}
+                  onChange={v => editing ? setEditing({ ...editing, platform: v }) : setForm({ ...form, platform: v })}
+                  options={selections.platforms}
                   placeholder="Select or type new platform"
-                  list="platforms-list"
-                  value={editing?.platform || form.platform}
-                  onChange={e => editing ? setEditing({ ...editing, platform: e.target.value }) : setForm({ ...form, platform: e.target.value })}
                 />
               </div>
 
               <div className="form-group">
                 <label className="form-label">Brand</label>
-                <datalist id="brands-list">
-                  {selections.brands.map(b => (
-                    <option key={b} value={b} />
-                  ))}
-                </datalist>
-                <input
-                  type="text"
-                  className="form-input"
+                <ComboInput
+                  value={editing ? editing.brand : form.brand}
+                  onChange={v => editing ? setEditing({ ...editing, brand: v }) : setForm({ ...form, brand: v })}
+                  options={selections.brands}
                   placeholder="Select or type new brand"
-                  list="brands-list"
-                  value={editing?.brand || form.brand}
-                  onChange={e => editing ? setEditing({ ...editing, brand: e.target.value }) : setForm({ ...form, brand: e.target.value })}
                 />
               </div>
 
               <div className="form-group">
                 <label className="form-label">Category</label>
-                <datalist id="categories-list">
-                  {selections.categories.map(c => (
-                    <option key={c} value={c} />
-                  ))}
-                </datalist>
-                <input
-                  type="text"
-                  className="form-input"
+                <ComboInput
+                  value={editing ? editing.category : form.category}
+                  onChange={v => editing ? setEditing({ ...editing, category: v }) : setForm({ ...form, category: v })}
+                  options={selections.categories}
                   placeholder="Select or type new category"
-                  list="categories-list"
-                  value={editing?.category || form.category}
-                  onChange={e => editing ? setEditing({ ...editing, category: e.target.value }) : setForm({ ...form, category: e.target.value })}
                 />
               </div>
 
