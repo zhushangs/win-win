@@ -8,6 +8,11 @@ import './WinningTracker.css';
 const STORAGE_KEY = 'WINWIN_WINNINGS';
 const SELECTIONS_KEY = 'WINWIN_SELECTIONS';
 
+// Dev mode starts with sample platforms/brands/categories; production starts empty
+// so everything comes from what the user enters.
+const emptySelections = { platforms: [], brands: [], categories: [] };
+const initialSelections = settings.isDev ? defaultSelections : emptySelections;
+
 const monthColors = [
   '#FF6B6B', '#4ECDC4', '#45B7D1', '#FFA07A',
   '#98D8C8', '#F7DC6F', '#BB8FCE', '#85C1E2',
@@ -153,7 +158,7 @@ export default function WinningTracker() {
   
   const [activeTab, setActiveTab] = useState('main');
   const [winnings, setWinnings] = useState([]);
-  const [selections, setSelections] = useState(defaultSelections);
+  const [selections, setSelections] = useState(initialSelections);
   // Becomes true once stored data has been loaded; saves are skipped until then
   // so the initial default state never overwrites what's in storage.
   const [loaded, setLoaded] = useState(false);
