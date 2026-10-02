@@ -237,7 +237,7 @@
 .tracker-header {
   padding: 12px;
   /* Keep the title clear of the iPhone status bar / notch and its blur when added to Home Screen */
-  padding-top: calc(env(safe-area-inset-top, 0px) + 24px);
+  padding-top: calc(env(safe-area-inset-top, 0px) + 44px);
   padding-left: calc(env(safe-area-inset-left, 0px) + 12px);
   padding-right: calc(env(safe-area-inset-right, 0px) + 12px);
   border-bottom: 1px solid #e2e8f0;
