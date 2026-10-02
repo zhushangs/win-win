@@ -887,3 +887,50 @@
   text-align: center;
   padding: 8px 0;
 }
+
+.category-toggle {
+  display: block;
+  width: 100%;
+  padding: 0;
+  border: none;
+  background: none;
+  text-align: left;
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
+}
+
+.category-chevron {
+  display: inline-block;
+  width: 16px;
+  color: #94a3b8;
+  font-size: 12px;
+}
+
+.category-breakdown {
+  margin-top: 10px;
+  margin-left: 16px;
+  padding-left: 12px;
+  border-left: 2px solid #ede9fe;
+}
+
+.breakdown-row + .breakdown-row {
+  margin-top: 10px;
+}
+
+.breakdown-label {
+  font-size: 13px;
+  font-weight: 600;
+  color: #475569;
+}
+
+.breakdown-value {
+  font-size: 13px;
+  font-weight: 700;
+  color: #334155;
+}
+
+.breakdown-bar-bg,
+.breakdown-bar {
+  height: 5px;
+}

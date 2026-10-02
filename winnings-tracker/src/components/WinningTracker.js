@@ -228,6 +228,7 @@ export default function WinningTracker() {
   const [showAddForm, setShowAddForm] = useState(false);
   const [editing, setEditing] = useState(null);
   const [analysisRange, setAnalysisRange] = useState('month');
+  const [expandedCategory, setExpandedCategory] = useState(null); // category row opened in Analysis
   const [customDateStart, setCustomDateStart] = useState('');
   const [customDateEnd, setCustomDateEnd] = useState('');
   const [editingSelection, setEditingSelection] = useState(null); // { type, index, value }
@@ -556,9 +557,10 @@ export default function WinningTracker() {
     const map = {};
     filteredForAnalysis.forEach(e => {
       const name = e.category || 'Uncategorized';
-      const c = map[name] || (map[name] = { name, value: 0, count: 0 });
+      const c = map[name] || (map[name] = { name, value: 0, count: 0, items: [] });
       c.value += Number(e.price) || 0;
       c.count += 1;
+      c.items.push(e);
     });
     let rows = Object.values(map).sort((a, b) => b.value - a.value || b.count - a.count);
     if (rows.length > 8) {
@@ -569,13 +571,45 @@ export default function WinningTracker() {
           name: `Other (${rest.length})`,
           value: rest.reduce((s, r) => s + r.value, 0),
           count: rest.reduce((s, r) => s + r.count, 0),
-          isOther: true
+          isOther: true,
+          children: rest
         }
       ];
     }
     const total = rows.reduce((s, r) => s + r.value, 0);
     return rows.map(r => ({ ...r, share: total > 0 ? (r.value / total) * 100 : 0 }));
   })();
+
+  // Rows shown when a category is expanded: its brands (top 7 + "Other brands" past 8),
+  // or, for the "Other" row, the categories folded into it. Shares are within the parent.
+  const getCategoryBreakdown = (c) => {
+    let rows;
+    if (c.isOther) {
+      rows = c.children.map(ch => ({ name: ch.name, value: ch.value, count: ch.count }));
+    } else {
+      const map = {};
+      c.items.forEach(e => {
+        const name = e.brand || 'No brand';
+        const b = map[name] || (map[name] = { name, value: 0, count: 0 });
+        b.value += Number(e.price) || 0;
+        b.count += 1;
+      });
+      rows = Object.values(map).sort((a, b) => b.value - a.value || b.count - a.count);
+      if (rows.length > 8) {
+        const rest = rows.slice(7);
+        rows = [
+          ...rows.slice(0, 7),
+          {
+            name: `Other brands (${rest.length})`,
+            value: rest.reduce((s, r) => s + r.value, 0),
+            count: rest.reduce((s, r) => s + r.count, 0),
+            isOther: true
+          }
+        ];
+      }
+    }
+    return rows.map(r => ({ ...r, share: c.value > 0 ? (r.value / c.value) * 100 : 0 }));
+  };
 
   const displayedMonths = Object.keys(monthlyData).sort();
 
@@ -863,27 +897,65 @@ export default function WinningTracker() {
               {categoryData.length === 0 ? (
                 <div className="category-empty">No items in this period</div>
               ) : (
-                categoryData.map(c => (
-                  <div key={c.name} className="category-row">
-                    <div className="dist-row">
-                      <span className={`dist-label ${c.isOther ? 'category-other' : ''}`}>{c.name}</span>
-                      <span className="dist-percent">${c.value.toFixed(2)}</span>
+                categoryData.map(c => {
+                  const open = expandedCategory === c.name;
+                  return (
+                    <div key={c.name} className="category-row">
+                      <button
+                        type="button"
+                        className="category-toggle"
+                        aria-expanded={open}
+                        onClick={() => setExpandedCategory(open ? null : c.name)}
+                      >
+                        <div className="dist-row">
+                          <span className={`dist-label ${c.isOther ? 'category-other' : ''}`}>
+                            <span className="category-chevron">{open ? '▾' : '▸'}</span>{c.name}
+                          </span>
+                          <span className="dist-percent">${c.value.toFixed(2)}</span>
+                        </div>
+                        <div className="progress-bg">
+                          <div
+                            className="progress-fill"
+                            style={{
+                              width: `${c.share}%`,
+                              minWidth: c.value > 0 ? '4px' : 0,
+                              backgroundColor: c.isOther ? '#94a3b8' : '#7c3aed'
+                            }}
+                          />
+                        </div>
+                        <div className="category-meta">
+                          {c.count} item{c.count === 1 ? '' : 's'} · {c.share.toFixed(1)}% of value
+                        </div>
+                      </button>
+
+                      {open && (
+                        <div className="category-breakdown">
+                          {getCategoryBreakdown(c).map(b => (
+                            <div key={b.name} className="breakdown-row">
+                              <div className="dist-row">
+                                <span className={`breakdown-label ${b.isOther ? 'category-other' : ''}`}>{b.name}</span>
+                                <span className="breakdown-value">${b.value.toFixed(2)}</span>
+                              </div>
+                              <div className="progress-bg breakdown-bar-bg">
+                                <div
+                                  className="progress-fill breakdown-bar"
+                                  style={{
+                                    width: `${b.share}%`,
+                                    minWidth: b.value > 0 ? '4px' : 0,
+                                    backgroundColor: b.isOther ? '#cbd5e1' : '#a78bfa'
+                                  }}
+                                />
+                              </div>
+                              <div className="category-meta">
+                                {b.count} item{b.count === 1 ? '' : 's'} · {b.share.toFixed(1)}% of {c.isOther ? 'Other' : c.name}
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      )}
                     </div>
-                    <div className="progress-bg">
-                      <div
-                        className="progress-fill"
-                        style={{
-                          width: `${c.share}%`,
-                          minWidth: c.value > 0 ? '4px' : 0,
-                          backgroundColor: c.isOther ? '#94a3b8' : '#7c3aed'
-                        }}
-                      />
-                    </div>
-                    <div className="category-meta">
-                      {c.count} item{c.count === 1 ? '' : 's'} · {c.share.toFixed(1)}% of value
-                    </div>
-                  </div>
-                ))
+                  );
+                })
               )}
             </div>
           </div>
