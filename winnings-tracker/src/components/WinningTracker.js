@@ -141,17 +141,6 @@ const filterByDateRange = (items, startDate, endDate) => {
   });
 };
 
-const getMonthLabel = (monthStr) => {
-  if (!monthStr) return '';
-  // Accept either 'YYYY-MM' or 'YYYY-MM-DD' or other date-like strings
-  const m = String(monthStr).split('T')[0];
-  const monthOnly = m.length >= 7 ? m.substring(0, 7) : m;
-  const [y, mo] = monthOnly.split('-');
-  const yearNum = Number(y) || new Date().getFullYear();
-  const monthNum = Number(mo) || 1;
-  return new Date(yearNum, monthNum - 1, 1).toLocaleDateString(undefined, { month: 'short' });
-};
-
 // Rank options by how often they appear in `items[field]`, breaking ties by most recent use.
 const rankByUsage = (options, items, field) => {
   const stats = {};
@@ -472,66 +461,57 @@ export default function WinningTracker() {
   const winningsForYear = filterByYear(winnings, selectedYear);
   const monthlyData = groupByMonth(winningsForYear);
 
+  // Human-readable label for a whole-month range, e.g. "October 2026", "Oct – Dec 2026",
+  // "Dec 2025 – Feb 2026".
+  const formatMonthRange = (start, end) => {
+    const sameYear = start.getFullYear() === end.getFullYear();
+    if (sameYear && start.getMonth() === end.getMonth()) {
+      return start.toLocaleDateString(undefined, { month: 'long', year: 'numeric' });
+    }
+    const s = start.toLocaleDateString(undefined, sameYear ? { month: 'short' } : { month: 'short', year: 'numeric' });
+    const e = end.toLocaleDateString(undefined, { month: 'short', year: 'numeric' });
+    return `${s} – ${e}`;
+  };
+
   const getAnalysisDateRange = () => {
     const today = new Date();
     const yearNum = Number(selectedYear) || currentYear;
-    const isCurrentYear = yearNum === currentYear;
-    let startDate, endDate, rangeLabel;
+    // Current year: the period containing today. Other years: the first period of that year.
+    const refMonth = yearNum === currentYear ? today.getMonth() : 0;
 
-    // If custom date range is set, use it
+    // Custom range (needs both dates). Dates are parsed as local days and both ends are
+    // inclusive; if From is after To they're swapped.
     if (customDateStart && customDateEnd) {
-      startDate = new Date(customDateStart);
-      endDate = new Date(customDateEnd);
-      const startMonth = getMonthLabel(customDateStart);
-      const endMonth = getMonthLabel(customDateEnd);
-      rangeLabel = `${startMonth} - ${endMonth}`;
-      return { startDate, endDate, rangeLabel };
+      let startDate = parseLocalDate(customDateStart);
+      let endDate = parseLocalDate(customDateEnd);
+      if (startDate > endDate) [startDate, endDate] = [endDate, startDate];
+      const fmt = d => d.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
+      return { startDate, endDate, rangeLabel: `${fmt(startDate)} – ${fmt(endDate)}` };
     }
 
+    let startMonth, months;
     if (analysisRange === 'month') {
-      if (isCurrentYear) {
-        startDate = new Date(today.getFullYear(), today.getMonth(), 1);
-        endDate = new Date(today.getFullYear(), today.getMonth() + 1, 0);
-        rangeLabel = today.toLocaleDateString(undefined, { month: 'long', year: 'numeric' });
-      } else {
-        startDate = new Date(yearNum, 0, 1);
-        endDate = new Date(yearNum, 0, 31);
-        rangeLabel = `${getMonthLabel(`${yearNum}-01`)} ${yearNum}`;
-      }
+      startMonth = refMonth; months = 1;
     } else if (analysisRange === 'quarter') {
-      if (isCurrentYear) {
-        const quarter = Math.floor(today.getMonth() / 3);
-        startDate = new Date(today.getFullYear(), quarter * 3, 1);
-        endDate = new Date(today.getFullYear(), quarter * 3 + 3, 0);
-      } else {
-        startDate = new Date(yearNum, 0, 1);
-        endDate = new Date(yearNum, 2, 31);
-      }
-      const startMonth = getMonthLabel(`${yearNum}-01`);
-      const endMonth = getMonthLabel(`${yearNum}-03`);
-      rangeLabel = `${startMonth} - ${endMonth} ${yearNum}`;
+      startMonth = Math.floor(refMonth / 3) * 3; months = 3;
     } else if (analysisRange === 'half') {
-      if (isCurrentYear) {
-        const half = today.getMonth() < 6 ? 0 : 1;
-        startDate = new Date(today.getFullYear(), half * 6, 1);
-        endDate = new Date(today.getFullYear(), half * 6 + 6, 0);
-      } else {
-        startDate = new Date(yearNum, 0, 1);
-        endDate = new Date(yearNum, 5, 30);
-      }
-      const startMonth = getMonthLabel(`${yearNum}-01`);
-      const endMonth = getMonthLabel(`${yearNum}-06`);
-      rangeLabel = `${startMonth} - ${endMonth} ${yearNum}`;
+      startMonth = Math.floor(refMonth / 6) * 6; months = 6;
     } else {
-      startDate = new Date(yearNum, 0, 1);
-      endDate = new Date(yearNum, 11, 31);
-      rangeLabel = String(yearNum);
+      startMonth = 0; months = 12;
     }
-
+    const startDate = new Date(yearNum, startMonth, 1);
+    const endDate = new Date(yearNum, startMonth + months, 0); // last day of the period
+    const rangeLabel = months === 12 ? String(yearNum) : formatMonthRange(startDate, endDate);
     return { startDate, endDate, rangeLabel };
   };
 
   const { startDate, endDate, rangeLabel } = getAnalysisDateRange();
+  const customActive = Boolean(customDateStart && customDateEnd);
+  const selectQuickRange = (range) => {
+    setAnalysisRange(range);
+    setCustomDateStart('');
+    setCustomDateEnd('');
+  };
   const filteredForAnalysis = filterByDateRange(winnings, startDate, endDate);
 
   const analysisData = (() => {
@@ -555,7 +535,7 @@ export default function WinningTracker() {
     ? displayedMonths[displayedMonths.length - 1]
     : null;
 
-  const addMonth = lastMonthInYear
+  const addMonthAfterLast = lastMonthInYear
     ? (() => {
         const [y, mo] = lastMonthInYear.split('-');
         const yearNum = Number(y) || Number(selectedYear) || currentYear;
@@ -564,6 +544,10 @@ export default function WinningTracker() {
         return `${yearNum}-${String(nextMonth).padStart(2, '0')}`;
       })()
     : `${selectedYear}-01`;
+  // New entries in the current year default to today; for other years, the month after the last card.
+  const addDefaultDate = String(selectedYear) === String(currentYear)
+    ? formatLocalDate(new Date())
+    : `${addMonthAfterLast}-01`;
 
   const addButtonMonthLabel = 'Next';
   const addButtonCenterLabel = 'Add another month';
@@ -672,7 +656,7 @@ export default function WinningTracker() {
                   onClick={() => {
                     setEditing(null);
                     setShowAddForm(true);
-                    setForm(f => ({ ...f, date: addMonth + '-01' }));
+                    setForm(f => ({ ...f, date: addDefaultDate }));
                   }}
                 >
                   <div className="sticker-month">{addButtonMonthLabel}</div>
@@ -689,26 +673,26 @@ export default function WinningTracker() {
               <label className="analysis-label">Period:</label>
               <div className="quick-select-buttons">
                 <button
-                  className={`quick-select ${analysisRange === 'month' ? 'active' : ''}`}
-                  onClick={() => setAnalysisRange('month')}
+                  className={`quick-select ${!customActive && analysisRange === 'month' ? 'active' : ''}`}
+                  onClick={() => selectQuickRange('month')}
                 >
                   {String(selectedYear) === String(currentYear) ? 'Current Month' : 'First Month'}
                 </button>
                 <button
-                  className={`quick-select ${analysisRange === 'quarter' ? 'active' : ''}`}
-                  onClick={() => setAnalysisRange('quarter')}
+                  className={`quick-select ${!customActive && analysisRange === 'quarter' ? 'active' : ''}`}
+                  onClick={() => selectQuickRange('quarter')}
                 >
                   {String(selectedYear) === String(currentYear) ? 'Current Quarter' : 'First Quarter'}
                 </button>
                 <button
-                  className={`quick-select ${analysisRange === 'half' ? 'active' : ''}`}
-                  onClick={() => setAnalysisRange('half')}
+                  className={`quick-select ${!customActive && analysisRange === 'half' ? 'active' : ''}`}
+                  onClick={() => selectQuickRange('half')}
                 >
                   {String(selectedYear) === String(currentYear) ? 'Current Half' : 'First Half'}
                 </button>
                 <button
-                  className={`quick-select ${analysisRange === 'year' ? 'active' : ''}`}
-                  onClick={() => setAnalysisRange('year')}
+                  className={`quick-select ${!customActive && analysisRange === 'year' ? 'active' : ''}`}
+                  onClick={() => selectQuickRange('year')}
                 >
                   Full Year
                 </button>
@@ -752,6 +736,9 @@ export default function WinningTracker() {
 
             <div className="analysis-range-display">
               <span className="range-label">Showing: {rangeLabel}</span>
+              {Boolean(customDateStart) !== Boolean(customDateEnd) && (
+                <div className="range-hint">Pick both From and To to use a custom range</div>
+              )}
             </div>
 
             <div className="analysis-card">
@@ -1142,7 +1129,7 @@ export default function WinningTracker() {
         <div className="modal-overlay">
           <div className="modal-content">
             <div className="modal-header">
-              <h2 className="modal-title">{new Date(editing.month + '-01').toLocaleDateString(undefined, { month: 'long', year: 'numeric' })}</h2>
+              <h2 className="modal-title">{parseLocalDate(editing.month + '-01').toLocaleDateString(undefined, { month: 'long', year: 'numeric' })}</h2>
               <button
                 className="modal-close"
                 onClick={() => setEditing(null)}
