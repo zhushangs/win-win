@@ -40,9 +40,13 @@ Tap a month to see every item in it, sorted by date, with its category, brand an
 | :---: | :---: | :---: |
 | <img src="docs/screenshots/main.png" width="240" alt="Monthly overview" /> | <img src="docs/screenshots/month-detail.png" width="240" alt="Month detail" /> | <img src="docs/screenshots/add-winning.png" width="240" alt="Add a winning" /> |
 
-| Analysis | By category | Settings & backup |
+| Analysis | By category | By platform |
 | :---: | :---: | :---: |
-| <img src="docs/screenshots/analysis.png" width="240" alt="Analysis" /> | <img src="docs/screenshots/analysis-category.png" width="240" alt="Brand breakdown inside a category" /> | <img src="docs/screenshots/settings.png" width="240" alt="Settings and backup" /> |
+| <img src="docs/screenshots/analysis.png" width="240" alt="Analysis" /> | <img src="docs/screenshots/analysis-category.png" width="240" alt="Brand breakdown inside a category" /> | <img src="docs/screenshots/analysis-platform.png" width="240" alt="Category breakdown inside a platform" /> |
+
+| Settings & backup |
+| :---: |
+| <img src="docs/screenshots/settings.png" width="240" alt="Settings and backup" /> |
 
 <sub>Screenshots use sample data.</sub>
 
