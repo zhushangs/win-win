@@ -28,6 +28,7 @@ Tap a month to see every item in it, sorted by date, with its category, brand an
 - Pick a period — current month, quarter, half year, full year — or a custom date range, for any year.
 - Total value and item count, plus a price distribution (below $50 / $50–$100 / above $100).
 - **By Category**: each category's total and share of value. Tap a category to see which brands it came from.
+- **By Platform**: each platform's total and share of value. Tap a platform to see which categories it gave you.
 
 ### Settings
 - Add, rename or delete platforms, brands and categories. Renaming updates every existing record; renaming onto an existing name merges the two.

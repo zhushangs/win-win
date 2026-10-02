@@ -141,6 +141,37 @@ const filterByDateRange = (items, startDate, endDate) => {
   });
 };
 
+// Group items by `field` and total their value, largest first. Past `maxRows` groups,
+// the top (maxRows - 1) are kept and the rest fold into one "Other" row whose
+// `children` are the folded groups. `share` is each row's % of the total value.
+const groupByField = (items, field, emptyLabel, otherLabel, maxRows = 8) => {
+  const map = {};
+  items.forEach(e => {
+    const name = e[field] || emptyLabel;
+    const g = map[name] || (map[name] = { name, value: 0, count: 0, items: [] });
+    g.value += Number(e.price) || 0;
+    g.count += 1;
+    g.items.push(e);
+  });
+  let rows = Object.values(map).sort((a, b) => b.value - a.value || b.count - a.count);
+  if (rows.length > maxRows) {
+    const rest = rows.slice(maxRows - 1);
+    rows = [
+      ...rows.slice(0, maxRows - 1),
+      {
+        name: `${otherLabel} (${rest.length})`,
+        value: rest.reduce((s, r) => s + r.value, 0),
+        count: rest.reduce((s, r) => s + r.count, 0),
+        items: rest.flatMap(r => r.items),
+        isOther: true,
+        children: rest
+      }
+    ];
+  }
+  const total = rows.reduce((s, r) => s + r.value, 0);
+  return rows.map(r => ({ ...r, share: total > 0 ? (r.value / total) * 100 : 0 }));
+};
+
 // Rank options by how often they appear in `items[field]`, breaking ties by most recent use.
 const rankByUsage = (options, items, field) => {
   const stats = {};
@@ -228,7 +259,7 @@ export default function WinningTracker() {
   const [showAddForm, setShowAddForm] = useState(false);
   const [editing, setEditing] = useState(null);
   const [analysisRange, setAnalysisRange] = useState('month');
-  const [expandedCategory, setExpandedCategory] = useState(null); // category row opened in Analysis
+  const [expandedRows, setExpandedRows] = useState({}); // { category: name, platform: name } opened in Analysis
   const [customDateStart, setCustomDateStart] = useState('');
   const [customDateEnd, setCustomDateEnd] = useState('');
   const [editingSelection, setEditingSelection] = useState(null); // { type, index, value }
@@ -551,64 +582,30 @@ export default function WinningTracker() {
     };
   })();
 
-  // Totals per category for the selected period, largest value first.
-  // More than 8 categories: keep the top 7 and fold the rest into "Other".
-  const categoryData = (() => {
-    const map = {};
-    filteredForAnalysis.forEach(e => {
-      const name = e.category || 'Uncategorized';
-      const c = map[name] || (map[name] = { name, value: 0, count: 0, items: [] });
-      c.value += Number(e.price) || 0;
-      c.count += 1;
-      c.items.push(e);
-    });
-    let rows = Object.values(map).sort((a, b) => b.value - a.value || b.count - a.count);
-    if (rows.length > 8) {
-      const rest = rows.slice(7);
-      rows = [
-        ...rows.slice(0, 7),
-        {
-          name: `Other (${rest.length})`,
-          value: rest.reduce((s, r) => s + r.value, 0),
-          count: rest.reduce((s, r) => s + r.count, 0),
-          isOther: true,
-          children: rest
-        }
-      ];
+  // Analysis breakdowns for the selected period: by category (drill into brands)
+  // and by platform (drill into categories).
+  const breakdownSections = [
+    {
+      key: 'category',
+      title: 'By Category',
+      rows: groupByField(filteredForAnalysis, 'category', 'Uncategorized', 'Other'),
+      child: { field: 'brand', empty: 'No brand', other: 'Other brands' }
+    },
+    {
+      key: 'platform',
+      title: 'By Platform',
+      rows: groupByField(filteredForAnalysis, 'platform', 'No platform', 'Other'),
+      child: { field: 'category', empty: 'Uncategorized', other: 'Other categories' }
     }
-    const total = rows.reduce((s, r) => s + r.value, 0);
-    return rows.map(r => ({ ...r, share: total > 0 ? (r.value / total) * 100 : 0 }));
-  })();
+  ];
 
-  // Rows shown when a category is expanded: its brands (top 7 + "Other brands" past 8),
-  // or, for the "Other" row, the categories folded into it. Shares are within the parent.
-  const getCategoryBreakdown = (c) => {
-    let rows;
-    if (c.isOther) {
-      rows = c.children.map(ch => ({ name: ch.name, value: ch.value, count: ch.count }));
-    } else {
-      const map = {};
-      c.items.forEach(e => {
-        const name = e.brand || 'No brand';
-        const b = map[name] || (map[name] = { name, value: 0, count: 0 });
-        b.value += Number(e.price) || 0;
-        b.count += 1;
-      });
-      rows = Object.values(map).sort((a, b) => b.value - a.value || b.count - a.count);
-      if (rows.length > 8) {
-        const rest = rows.slice(7);
-        rows = [
-          ...rows.slice(0, 7),
-          {
-            name: `Other brands (${rest.length})`,
-            value: rest.reduce((s, r) => s + r.value, 0),
-            count: rest.reduce((s, r) => s + r.count, 0),
-            isOther: true
-          }
-        ];
-      }
+  // Rows shown when a row is expanded. For an "Other" row, the groups folded into it;
+  // otherwise the row's items grouped by the child field. Shares are within the parent.
+  const getBreakdown = (row, child) => {
+    if (row.isOther) {
+      return row.children.map(ch => ({ ...ch, share: row.value > 0 ? (ch.value / row.value) * 100 : 0 }));
     }
-    return rows.map(r => ({ ...r, share: c.value > 0 ? (r.value / c.value) * 100 : 0 }));
+    return groupByField(row.items, child.field, child.empty, child.other);
   };
 
   const displayedMonths = Object.keys(monthlyData).sort();
@@ -892,72 +889,76 @@ export default function WinningTracker() {
               </div>
             </div>
 
-            <h3 className="analysis-title">By Category</h3>
-            <div className="dist-card">
-              {categoryData.length === 0 ? (
-                <div className="category-empty">No items in this period</div>
-              ) : (
-                categoryData.map(c => {
-                  const open = expandedCategory === c.name;
-                  return (
-                    <div key={c.name} className="category-row">
-                      <button
-                        type="button"
-                        className="category-toggle"
-                        aria-expanded={open}
-                        onClick={() => setExpandedCategory(open ? null : c.name)}
-                      >
-                        <div className="dist-row">
-                          <span className={`dist-label ${c.isOther ? 'category-other' : ''}`}>
-                            <span className="category-chevron">{open ? '▾' : '▸'}</span>{c.name}
-                          </span>
-                          <span className="dist-percent">${c.value.toFixed(2)}</span>
-                        </div>
-                        <div className="progress-bg">
-                          <div
-                            className="progress-fill"
-                            style={{
-                              width: `${c.share}%`,
-                              minWidth: c.value > 0 ? '4px' : 0,
-                              backgroundColor: c.isOther ? '#94a3b8' : '#7c3aed'
-                            }}
-                          />
-                        </div>
-                        <div className="category-meta">
-                          {c.count} item{c.count === 1 ? '' : 's'} · {c.share.toFixed(1)}% of value
-                        </div>
-                      </button>
-
-                      {open && (
-                        <div className="category-breakdown">
-                          {getCategoryBreakdown(c).map(b => (
-                            <div key={b.name} className="breakdown-row">
-                              <div className="dist-row">
-                                <span className={`breakdown-label ${b.isOther ? 'category-other' : ''}`}>{b.name}</span>
-                                <span className="breakdown-value">${b.value.toFixed(2)}</span>
-                              </div>
-                              <div className="progress-bg breakdown-bar-bg">
-                                <div
-                                  className="progress-fill breakdown-bar"
-                                  style={{
-                                    width: `${b.share}%`,
-                                    minWidth: b.value > 0 ? '4px' : 0,
-                                    backgroundColor: b.isOther ? '#cbd5e1' : '#a78bfa'
-                                  }}
-                                />
-                              </div>
-                              <div className="category-meta">
-                                {b.count} item{b.count === 1 ? '' : 's'} · {b.share.toFixed(1)}% of {c.isOther ? 'Other' : c.name}
-                              </div>
+            {breakdownSections.map(section => (
+              <React.Fragment key={section.key}>
+                <h3 className="analysis-title">{section.title}</h3>
+                <div className="dist-card">
+                  {section.rows.length === 0 ? (
+                    <div className="category-empty">No items in this period</div>
+                  ) : (
+                    section.rows.map(c => {
+                      const open = expandedRows[section.key] === c.name;
+                      return (
+                        <div key={c.name} className="category-row">
+                          <button
+                            type="button"
+                            className="category-toggle"
+                            aria-expanded={open}
+                            onClick={() => setExpandedRows(prev => ({ ...prev, [section.key]: open ? null : c.name }))}
+                          >
+                            <div className="dist-row">
+                              <span className={`dist-label ${c.isOther ? 'category-other' : ''}`}>
+                                <span className="category-chevron">{open ? '▾' : '▸'}</span>{c.name}
+                              </span>
+                              <span className="dist-percent">${c.value.toFixed(2)}</span>
                             </div>
-                          ))}
+                            <div className="progress-bg">
+                              <div
+                                className="progress-fill"
+                                style={{
+                                  width: `${c.share}%`,
+                                  minWidth: c.value > 0 ? '4px' : 0,
+                                  backgroundColor: c.isOther ? '#94a3b8' : '#7c3aed'
+                                }}
+                              />
+                            </div>
+                            <div className="category-meta">
+                              {c.count} item{c.count === 1 ? '' : 's'} · {c.share.toFixed(1)}% of value
+                            </div>
+                          </button>
+
+                          {open && (
+                            <div className="category-breakdown">
+                              {getBreakdown(c, section.child).map(b => (
+                                <div key={b.name} className="breakdown-row">
+                                  <div className="dist-row">
+                                    <span className={`breakdown-label ${b.isOther ? 'category-other' : ''}`}>{b.name}</span>
+                                    <span className="breakdown-value">${b.value.toFixed(2)}</span>
+                                  </div>
+                                  <div className="progress-bg breakdown-bar-bg">
+                                    <div
+                                      className="progress-fill breakdown-bar"
+                                      style={{
+                                        width: `${b.share}%`,
+                                        minWidth: b.value > 0 ? '4px' : 0,
+                                        backgroundColor: b.isOther ? '#cbd5e1' : '#a78bfa'
+                                      }}
+                                    />
+                                  </div>
+                                  <div className="category-meta">
+                                    {b.count} item{b.count === 1 ? '' : 's'} · {b.share.toFixed(1)}% of {c.isOther ? 'Other' : c.name}
+                                  </div>
+                                </div>
+                              ))}
+                            </div>
+                          )}
                         </div>
-                      )}
-                    </div>
-                  );
-                })
-              )}
-            </div>
+                      );
+                    })
+                  )}
+                </div>
+              </React.Fragment>
+            ))}
           </div>
         )}
 
