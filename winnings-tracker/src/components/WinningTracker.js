@@ -549,6 +549,25 @@ export default function WinningTracker() {
     ? formatLocalDate(new Date())
     : `${addMonthAfterLast}-01`;
 
+  // Year picker shared by the Main and Analysis tabs (both use selectedYear).
+  const yearSelector = (
+    <div className="year-selector-inline">
+      <select
+        className="year-dropdown"
+        value={selectedYear}
+        onChange={(e) => {
+          setSelectedYear(String(e.target.value));
+          setCustomDateStart('');
+          setCustomDateEnd('');
+        }}
+      >
+        {availableYears.map(year => (
+          <option key={year} value={year}>{year}</option>
+        ))}
+      </select>
+    </div>
+  );
+
   const addButtonMonthLabel = 'Next';
   const addButtonCenterLabel = 'Add another month';
 
@@ -585,21 +604,7 @@ export default function WinningTracker() {
           <div>
             <div className="stickers-header-row">
               <h2 className="stickers-title">Monthly Winnings - {selectedYear}</h2>
-              <div className="year-selector-inline">
-                <select
-                  className="year-dropdown"
-                  value={selectedYear}
-                  onChange={(e) => {
-                    setSelectedYear(String(e.target.value));
-                    setCustomDateStart('');
-                    setCustomDateEnd('');
-                  }}
-                >
-                  {availableYears.map(year => (
-                    <option key={year} value={year}>{year}</option>
-                  ))}
-                </select>
-              </div>
+              {yearSelector}
             </div>
 
             <div className="month-sticker-grid">
@@ -669,6 +674,11 @@ export default function WinningTracker() {
 
         {activeTab === 'analysis' && (
           <div className="analysis-section">
+            <div className="stickers-header-row">
+              <h2 className="stickers-title">Analysis - {selectedYear}</h2>
+              {yearSelector}
+            </div>
+
             <div className="analysis-controls">
               <label className="analysis-label">Period:</label>
               <div className="quick-select-buttons">
@@ -1140,11 +1150,15 @@ export default function WinningTracker() {
 
             <div className="modal-body">
               <div className="items-list">
-                {editing.items.map(item => (
+                {[...editing.items]
+                  .sort((a, b) => (a.date || '').localeCompare(b.date || '') || (a.id - b.id))
+                  .map(item => (
                   <div key={String(item.id)} className="item-row">
                     <div className="item-info">
                       <div className="item-title">{item.item}</div>
-                      <div className="item-meta">{item.category} • {item.brand} • {item.platform}</div>
+                      <div className="item-meta">
+                        {parseLocalDate(item.date).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })} • {item.category} • {item.brand} • {item.platform}
+                      </div>
                     </div>
                     <div className="item-actions">
                       <span className="item-price">${Number(item.price).toFixed(2)}</span>
@@ -1172,7 +1186,10 @@ export default function WinningTracker() {
                 onClick={() => {
                   setEditing(null);
                   setShowAddForm(true);
-                  setForm({ date: editing.month + '-01', platform: '', brand: '', category: '', item: '', price: '' });
+                  // Default to today when adding inside the current month, else the 1st of that month
+                  const today = formatLocalDate(new Date());
+                  const date = today.substring(0, 7) === editing.month ? today : editing.month + '-01';
+                  setForm({ date, platform: '', brand: '', category: '', item: '', price: '' });
                 }}
                 style={{ width: '100%', marginBottom: '8px' }}
               >
