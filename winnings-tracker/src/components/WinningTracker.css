@@ -845,3 +845,9 @@
   background-color: #7c3aed;
   color: #fff;
 }
+
+.chip-more {
+  background-color: #fff;
+  border-style: dashed;
+  color: #64748b;
+}

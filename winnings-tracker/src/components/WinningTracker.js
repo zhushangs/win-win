@@ -152,13 +152,48 @@ const getMonthLabel = (monthStr) => {
   return new Date(yearNum, monthNum - 1, 1).toLocaleDateString(undefined, { month: 'short' });
 };
 
+// Rank options by how often they appear in `items[field]`, breaking ties by most recent use.
+const rankByUsage = (options, items, field) => {
+  const stats = {};
+  items.forEach(i => {
+    const key = i[field];
+    if (!key) return;
+    const st = stats[key] || (stats[key] = { count: 0, last: '' });
+    st.count += 1;
+    if ((i.date || '') > st.last) st.last = i.date || '';
+  });
+  return [...options].sort((a, b) => {
+    const sa = stats[a] || { count: 0, last: '' };
+    const sb = stats[b] || { count: 0, last: '' };
+    return sb.count - sa.count || sb.last.localeCompare(sa.last);
+  });
+};
+
 // Text input with tappable suggestion chips underneath. Replaces <datalist>, which
 // iOS Safari only shows as a single keyboard suggestion instead of a list.
-function ComboInput({ value, onChange, options, placeholder }) {
+// `options` should already be ranked (most used first). With an empty input only the
+// top `limit` chips are shown plus a "+N more" chip; typing searches all options.
+function ComboInput({ value, onChange, options, placeholder, limit = 8 }) {
+  const [showAll, setShowAll] = useState(false);
   const text = value || '';
   const q = text.trim().toLowerCase();
   const exact = options.some(o => o.toLowerCase() === q);
-  const matches = exact ? [] : options.filter(o => o.toLowerCase().includes(q));
+
+  let matches = [];
+  let hidden = 0;
+  if (!exact) {
+    if (q) {
+      const starts = options.filter(o => o.toLowerCase().startsWith(q));
+      const contains = options.filter(o => !o.toLowerCase().startsWith(q) && o.toLowerCase().includes(q));
+      matches = [...starts, ...contains].slice(0, 8);
+    } else if (showAll || options.length <= limit) {
+      matches = options;
+    } else {
+      matches = options.slice(0, limit);
+      hidden = options.length - limit;
+    }
+  }
+
   return (
     <>
       <input
@@ -178,6 +213,11 @@ function ComboInput({ value, onChange, options, placeholder }) {
               {o}
             </button>
           ))}
+          {hidden > 0 && (
+            <button type="button" className="chip chip-more" onClick={() => setShowAll(true)}>
+              +{hidden} more
+            </button>
+          )}
         </div>
       )}
     </>
@@ -293,29 +333,39 @@ export default function WinningTracker() {
     }));
   };
 
+  // Trim the value and reuse an existing option's spelling if it matches ignoring case,
+  // so "dior" doesn't become a second entry next to "Dior".
+  const canonical = (type, value) => {
+    const v = String(value || '').trim();
+    return selections[type].find(o => o.toLowerCase() === v.toLowerCase()) || v;
+  };
+
   const handleSubmit = () => {
     if (!form.date || !form.platform || !form.brand || !form.category || !form.item || !form.price) {
       alert('Missing fields: Please fill in all fields');
       return;
     }
     
-    addNewSelection('platforms', form.platform);
-    addNewSelection('brands', form.brand);
-    addNewSelection('categories', form.category);
-
     const price = evaluatePrice(form.price);
     if (price === null) {
       alert('Invalid price: use numbers and + - * / ( ), e.g. 20+15');
       return;
     }
+
+    const platform = canonical('platforms', form.platform);
+    const brand = canonical('brands', form.brand);
+    const category = canonical('categories', form.category);
+    addNewSelection('platforms', platform);
+    addNewSelection('brands', brand);
+    addNewSelection('categories', category);
     // normalize date to YYYY-MM-DD string using local components to avoid timezone shifting
     const dateStr = formatLocalDate(form.date);
     const newWin = {
       id: Date.now(),
       date: dateStr,
-      platform: form.platform,
-      brand: form.brand,
-      category: form.category,
+      platform,
+      brand,
+      category,
       item: form.item,
       price,
       month: dateStr.substring(0, 7)
@@ -342,17 +392,21 @@ export default function WinningTracker() {
       return;
     }
     
-    addNewSelection('platforms', editing.platform);
-    addNewSelection('brands', editing.brand);
-    addNewSelection('categories', editing.category);
-
     const price = evaluatePrice(editing.price);
     if (price === null) {
       alert('Invalid price: use numbers and + - * / ( ), e.g. 20+15');
       return;
     }
+
+    const platform = canonical('platforms', editing.platform);
+    const brand = canonical('brands', editing.brand);
+    const category = canonical('categories', editing.category);
+    addNewSelection('platforms', platform);
+    addNewSelection('brands', brand);
+    addNewSelection('categories', category);
+
     const editingDateStr = formatLocalDate(editing.date);
-    const updated = { ...editing, price, date: editingDateStr, month: editingDateStr.substring(0, 7) };
+    const updated = { ...editing, platform, brand, category, price, date: editingDateStr, month: editingDateStr.substring(0, 7) };
 
     // Update winnings and refresh the month modal to show the item under its updated month
     setWinnings(prev => {
@@ -998,7 +1052,8 @@ export default function WinningTracker() {
                 <ComboInput
                   value={editing ? editing.platform : form.platform}
                   onChange={v => editing ? setEditing({ ...editing, platform: v }) : setForm({ ...form, platform: v })}
-                  options={selections.platforms}
+                  options={rankByUsage(selections.platforms, winnings, 'platform')}
+                  limit={12}
                   placeholder="Select or type new platform"
                 />
               </div>
@@ -1008,7 +1063,8 @@ export default function WinningTracker() {
                 <ComboInput
                   value={editing ? editing.brand : form.brand}
                   onChange={v => editing ? setEditing({ ...editing, brand: v }) : setForm({ ...form, brand: v })}
-                  options={selections.brands}
+                  options={rankByUsage(selections.brands, winnings, 'brand')}
+                  limit={6}
                   placeholder="Select or type new brand"
                 />
               </div>
@@ -1018,7 +1074,8 @@ export default function WinningTracker() {
                 <ComboInput
                   value={editing ? editing.category : form.category}
                   onChange={v => editing ? setEditing({ ...editing, category: v }) : setForm({ ...form, category: v })}
-                  options={selections.categories}
+                  options={rankByUsage(selections.categories, winnings, 'category')}
+                  limit={8}
                   placeholder="Select or type new category"
                 />
               </div>
