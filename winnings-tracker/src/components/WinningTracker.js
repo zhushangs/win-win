@@ -550,6 +550,33 @@ export default function WinningTracker() {
     };
   })();
 
+  // Totals per category for the selected period, largest value first.
+  // More than 8 categories: keep the top 7 and fold the rest into "Other".
+  const categoryData = (() => {
+    const map = {};
+    filteredForAnalysis.forEach(e => {
+      const name = e.category || 'Uncategorized';
+      const c = map[name] || (map[name] = { name, value: 0, count: 0 });
+      c.value += Number(e.price) || 0;
+      c.count += 1;
+    });
+    let rows = Object.values(map).sort((a, b) => b.value - a.value || b.count - a.count);
+    if (rows.length > 8) {
+      const rest = rows.slice(7);
+      rows = [
+        ...rows.slice(0, 7),
+        {
+          name: `Other (${rest.length})`,
+          value: rest.reduce((s, r) => s + r.value, 0),
+          count: rest.reduce((s, r) => s + r.count, 0),
+          isOther: true
+        }
+      ];
+    }
+    const total = rows.reduce((s, r) => s + r.value, 0);
+    return rows.map(r => ({ ...r, share: total > 0 ? (r.value / total) * 100 : 0 }));
+  })();
+
   const displayedMonths = Object.keys(monthlyData).sort();
 
   const lastMonthInYear = displayedMonths.length > 0
@@ -829,6 +856,35 @@ export default function WinningTracker() {
                   }}
                 />
               </div>
+            </div>
+
+            <h3 className="analysis-title">By Category</h3>
+            <div className="dist-card">
+              {categoryData.length === 0 ? (
+                <div className="category-empty">No items in this period</div>
+              ) : (
+                categoryData.map(c => (
+                  <div key={c.name} className="category-row">
+                    <div className="dist-row">
+                      <span className={`dist-label ${c.isOther ? 'category-other' : ''}`}>{c.name}</span>
+                      <span className="dist-percent">${c.value.toFixed(2)}</span>
+                    </div>
+                    <div className="progress-bg">
+                      <div
+                        className="progress-fill"
+                        style={{
+                          width: `${c.share}%`,
+                          minWidth: c.value > 0 ? '4px' : 0,
+                          backgroundColor: c.isOther ? '#94a3b8' : '#7c3aed'
+                        }}
+                      />
+                    </div>
+                    <div className="category-meta">
+                      {c.count} item{c.count === 1 ? '' : 's'} · {c.share.toFixed(1)}% of value
+                    </div>
+                  </div>
+                ))
+              )}
             </div>
           </div>
         )}
