@@ -306,12 +306,33 @@ export default function WinningTracker() {
     }
   };
 
-  const updateSelection = (type, index, newValue) => {
-    if (newValue && !selections[type].some((item, i) => i !== index && item === newValue)) {
+  // Rename an option in Settings and update every record that uses it.
+  // Renaming onto an existing option (ignoring case) merges the two after confirmation.
+  const updateSelection = (type, index, rawValue) => {
+    const field = { platforms: 'platform', brands: 'brand', categories: 'category' }[type];
+    const oldValue = selections[type][index];
+    const newValue = String(rawValue || '').trim();
+    if (!newValue || newValue === oldValue) return;
+
+    const affected = winnings.filter(w => w[field] === oldValue).length;
+    const existing = selections[type].find((o, i) => i !== index && o.toLowerCase() === newValue.toLowerCase());
+    let target = newValue;
+
+    if (existing) {
+      const msg = `"${existing}" already exists. Merge "${oldValue}" into it?` +
+        (affected ? ` ${affected} record${affected === 1 ? '' : 's'} will be updated.` : '');
+      if (!window.confirm(msg)) return;
+      target = existing;
+      setSelections(prev => ({ ...prev, [type]: prev[type].filter((_, i) => i !== index) }));
+    } else {
       setSelections(prev => ({
         ...prev,
         [type]: prev[type].map((item, i) => i === index ? newValue : item)
       }));
+    }
+
+    if (affected) {
+      setWinnings(prev => prev.map(w => w[field] === oldValue ? { ...w, [field]: target } : w));
     }
   };
 
