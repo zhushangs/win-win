@@ -259,8 +259,9 @@ export default function WinningTracker() {
   const [showAddForm, setShowAddForm] = useState(false);
   const [mainView, setMainView] = useState('cards'); // 'cards' = month cards, 'list' = every item of the year
   const [searchQuery, setSearchQuery] = useState('');
-  // PDF export of the list view: 'idle' | 'working' | 'ready' (file built, waiting for a tap to share)
-  const [pdfState, setPdfState] = useState({ status: 'idle', file: null });
+  // Export of the list view as 'image' or 'pdf'.
+  // status: 'idle' | 'working' | 'ready' (file built, waiting for one more tap to share)
+  const [exportState, setExportState] = useState({ status: 'idle', kind: null, file: null });
   const [editing, setEditing] = useState(null);
   const [analysisRange, setAnalysisRange] = useState('month');
   const [expandedRows, setExpandedRows] = useState({}); // { category: name, platform: name } opened in Analysis
@@ -532,9 +533,9 @@ export default function WinningTracker() {
   const listTotal = listItems.reduce((s, w) => s + (Number(w.price) || 0), 0);
   const showList = isSearching || mainView === 'list';
 
-  // A prepared PDF is only valid for the list it was made from.
+  // A prepared file is only valid for the list it was made from.
   useEffect(() => {
-    setPdfState({ status: 'idle', file: null });
+    setExportState({ status: 'idle', kind: null, file: null });
   }, [searchText, selectedYear, mainView, winnings]);
 
   // Open the share sheet (Save to Files, AirDrop, Mail, WeChat, Print...) where supported,
@@ -558,24 +559,24 @@ export default function WinningTracker() {
     setTimeout(() => URL.revokeObjectURL(url), 1000);
   };
 
-  const handleSharePdf = async () => {
+  const handleShare = async (kind) => {
     // Second tap after the browser blocked sharing (it needs a fresh tap after a slow build)
-    if (pdfState.status === 'ready' && pdfState.file) {
+    if (exportState.status === 'ready' && exportState.kind === kind && exportState.file) {
       try {
-        await shareOrDownload(pdfState.file);
-        setPdfState({ status: 'idle', file: null });
+        await shareOrDownload(exportState.file);
+        setExportState({ status: 'idle', kind: null, file: null });
       } catch (e) {
-        alert(`Could not share PDF: ${e.message}`);
+        alert(`Could not share: ${e.message}`);
       }
       return;
     }
 
-    setPdfState({ status: 'working', file: null });
+    setExportState({ status: 'working', kind, file: null });
     try {
-      const { createWinningsPdf } = await import('../lib/pdfExport');
+      const { createWinningsPdf, createWinningsImage } = await import('../lib/pdfExport');
       const query = searchQuery.trim();
       const count = `${listItems.length} item${listItems.length === 1 ? '' : 's'}`;
-      const blob = await createWinningsPdf({
+      const doc = {
         title: isSearching ? `Win Win — “${query}”` : `Win Win — ${selectedYear}`,
         subtitle: isSearching
           ? `${count} · $${listTotal.toFixed(2)} · in ${listMonths.length} month${listMonths.length === 1 ? '' : 's'} · all years`
@@ -599,22 +600,23 @@ export default function WinningTracker() {
             }))
           };
         })
-      });
+      };
+      const blob = kind === 'pdf' ? await createWinningsPdf(doc) : await createWinningsImage(doc);
       const safeName = (isSearching ? query : String(selectedYear)).replace(/[\\/:*?"<>|\s]+/g, '-');
-      const file = new File([blob], `win-win-${safeName}.pdf`, { type: 'application/pdf' });
+      const file = new File([blob], `win-win-${safeName}.${kind === 'pdf' ? 'pdf' : 'png'}`, { type: blob.type });
       try {
         await shareOrDownload(file);
-        setPdfState({ status: 'idle', file: null });
+        setExportState({ status: 'idle', kind: null, file: null });
       } catch (e) {
         if (e.name === 'NotAllowedError') {
-          setPdfState({ status: 'ready', file }); // ask for one more tap
+          setExportState({ status: 'ready', kind, file }); // ask for one more tap
         } else {
           throw e;
         }
       }
     } catch (e) {
-      alert(`Could not create PDF: ${e.message}`);
-      setPdfState({ status: 'idle', file: null });
+      alert(`Could not create ${kind === 'pdf' ? 'PDF' : 'image'}: ${e.message}`);
+      setExportState({ status: 'idle', kind: null, file: null });
     }
   };
 
@@ -845,14 +847,23 @@ export default function WinningTracker() {
                   )}
                   </div>
                   {listItems.length > 0 && (
-                    <button
-                      type="button"
-                      className={`share-pdf-btn ${pdfState.status === 'ready' ? 'ready' : ''}`}
-                      onClick={handleSharePdf}
-                      disabled={pdfState.status === 'working'}
-                    >
-                      {pdfState.status === 'working' ? 'Creating…' : pdfState.status === 'ready' ? 'Tap to share' : 'Share PDF'}
-                    </button>
+                    <div className="share-buttons">
+                      {[['image', 'Share Image'], ['pdf', 'Share PDF']].map(([kind, label]) => {
+                        const mine = exportState.kind === kind;
+                        const ready = mine && exportState.status === 'ready';
+                        return (
+                          <button
+                            key={kind}
+                            type="button"
+                            className={`share-pdf-btn ${ready ? 'ready' : ''}`}
+                            onClick={() => handleShare(kind)}
+                            disabled={exportState.status === 'working'}
+                          >
+                            {mine && exportState.status === 'working' ? 'Creating…' : ready ? 'Tap to share' : label}
+                          </button>
+                        );
+                      })}
+                    </div>
                   )}
                 </div>
 

@@ -1,14 +1,16 @@
-// Builds a printable A4 PDF of a winnings list without any PDF library.
+// Exports a winnings list as a long PNG image or a PDF, without any PDF library.
 //
-// Each page is drawn on a <canvas> with the system fonts, so any text the phone can
-// display (including Chinese brand names) shows up correctly. Pages are encoded as JPEG
-// and wrapped in a minimal PDF. Text in the PDF is an image (not selectable).
+// The list is drawn on one long <canvas> (A4 width, height fits the content) with the
+// system fonts, so any text the phone can display (including Chinese brand names) shows
+// up correctly. The image export is that canvas as PNG; the PDF export wraps it (as JPEG)
+// in a minimal PDF. Text is part of the picture in both (not selectable).
 
-const PAGE_W = 595.28; // A4 in points
-const PAGE_H = 841.89;
-const SCALE = 2; // canvas pixels per point (sharp enough for screens and printing)
+const PAGE_W = 595.28; // A4 width in points
+const MAX_PAGE_H = 14400; // largest page the PDF format allows; only longer lists use a 2nd page
+const MAX_SCALE = 2; // canvas pixels per point when there's room (sharp on screens and in print)
+const MAX_CANVAS_PIXELS = 16000000; // stay under iOS Safari's canvas area limit
+const MAX_CANVAS_SIDE = 32000;
 const MARGIN = 40;
-const FOOTER_SPACE = 28;
 
 const FONT_STACK =
   '-apple-system, BlinkMacSystemFont, "Helvetica Neue", "PingFang SC", "Hiragino Sans GB", ' +
@@ -36,17 +38,21 @@ const fit = (ctx, text, maxWidth) => {
   return t + '…';
 };
 
-// Split the content into pages. A month header is never left alone at the bottom of a page.
-const paginate = (months) => {
-  const pages = [[]];
-  const bottom = PAGE_H - MARGIN - FOOTER_SPACE;
+// Lay everything out on one page; only a list too long for a single PDF page continues
+// on another. A month header is never left alone at the bottom of a page.
+const layout = (months, maxPageHeight = MAX_PAGE_H) => {
+  const pages = [{ blocks: [], height: 0 }];
+  const bottom = maxPageHeight - MARGIN;
   let y = MARGIN;
   const place = (block, height, keepWith = 0) => {
-    if (y + height + keepWith > bottom && pages[pages.length - 1].length > 0) {
-      pages.push([]);
+    let page = pages[pages.length - 1];
+    if (y + height + keepWith > bottom && page.blocks.length > 0) {
+      page.height = y + MARGIN;
+      page = { blocks: [], height: 0 };
+      pages.push(page);
       y = MARGIN;
     }
-    pages[pages.length - 1].push({ ...block, y });
+    page.blocks.push({ ...block, y });
     y += height;
   };
   place({ kind: 'header' }, HEIGHTS.header);
@@ -54,24 +60,32 @@ const paginate = (months) => {
     place({ kind: 'month', month: m }, HEIGHTS.month, m.items.length ? HEIGHTS.item : 0);
     m.items.forEach(item => place({ kind: 'item', item }, HEIGHTS.item));
   });
+  pages[pages.length - 1].height = y + MARGIN;
   return pages;
 };
 
-const drawPage = (blocks, doc, pageIndex, pageCount) => {
+const drawPage = (page, doc) => {
+  const pageH = page.height;
+  // Lower the resolution for very long pages so the canvas stays within browser limits.
+  const scale = Math.min(
+    MAX_SCALE,
+    Math.sqrt(MAX_CANVAS_PIXELS / (PAGE_W * pageH)),
+    MAX_CANVAS_SIDE / pageH
+  );
   const canvas = document.createElement('canvas');
-  canvas.width = Math.round(PAGE_W * SCALE);
-  canvas.height = Math.round(PAGE_H * SCALE);
+  canvas.width = Math.round(PAGE_W * scale);
+  canvas.height = Math.round(pageH * scale);
   const ctx = canvas.getContext('2d');
-  ctx.scale(SCALE, SCALE);
+  ctx.scale(scale, scale);
   ctx.fillStyle = '#ffffff';
-  ctx.fillRect(0, 0, PAGE_W, PAGE_H);
+  ctx.fillRect(0, 0, PAGE_W, pageH);
   ctx.textBaseline = 'alphabetic';
 
   const left = MARGIN;
   const right = PAGE_W - MARGIN;
   const width = right - left;
 
-  blocks.forEach(b => {
+  page.blocks.forEach(b => {
     const y = b.y;
     if (b.kind === 'header') {
       ctx.fillStyle = COLORS.ink;
@@ -113,19 +127,14 @@ const drawPage = (blocks, doc, pageIndex, pageCount) => {
     }
   });
 
-  ctx.fillStyle = COLORS.muted;
-  ctx.font = font(9);
-  ctx.textAlign = 'center';
-  ctx.fillText(`Win Win · Page ${pageIndex + 1} of ${pageCount}`, PAGE_W / 2, PAGE_H - MARGIN + 8);
-  ctx.textAlign = 'left';
-  return canvas;
+  return { canvas, height: pageH };
 };
 
-const canvasToJpeg = (canvas) =>
+const canvasToJpeg = ({ canvas, height }) =>
   new Promise((resolve, reject) => {
     canvas.toBlob(async blob => {
       if (!blob) return reject(new Error('Could not render page'));
-      resolve({ bytes: new Uint8Array(await blob.arrayBuffer()), w: canvas.width, h: canvas.height });
+      resolve({ bytes: new Uint8Array(await blob.arrayBuffer()), w: canvas.width, h: canvas.height, pageH: height });
     }, 'image/jpeg', 0.9);
   });
 
@@ -157,10 +166,10 @@ const assemblePdf = (images) => {
   images.forEach((img, i) => {
     const p = 3 + 3 * i;
     obj(p, () => push(
-      `<< /Type /Page /Parent 2 0 R /MediaBox [0 0 ${PAGE_W} ${PAGE_H}] ` +
+      `<< /Type /Page /Parent 2 0 R /MediaBox [0 0 ${PAGE_W} ${img.pageH.toFixed(2)}] ` +
       `/Resources << /XObject << /Im0 ${p + 2} 0 R >> >> /Contents ${p + 1} 0 R >>`
     ));
-    const content = `q ${PAGE_W} 0 0 ${PAGE_H} 0 0 cm /Im0 Do Q`;
+    const content = `q ${PAGE_W} 0 0 ${img.pageH.toFixed(2)} 0 0 cm /Im0 Do Q`;
     obj(p + 1, () => {
       push(`<< /Length ${content.length} >>\nstream\n`);
       push(content);
@@ -194,10 +203,22 @@ const assemblePdf = (images) => {
  * @returns {Promise<Blob>} application/pdf
  */
 export async function createWinningsPdf(doc) {
-  const pages = paginate(doc.months);
+  const pages = layout(doc.months);
   const images = [];
-  for (let i = 0; i < pages.length; i++) {
-    images.push(await canvasToJpeg(drawPage(pages[i], doc, i, pages.length)));
+  for (const page of pages) {
+    images.push(await canvasToJpeg(drawPage(page, doc)));
   }
   return assemblePdf(images);
+}
+
+/**
+ * Same content as createWinningsPdf, as one long PNG image (never split).
+ * @returns {Promise<Blob>} image/png
+ */
+export async function createWinningsImage(doc) {
+  const [page] = layout(doc.months, Infinity);
+  const { canvas } = drawPage(page, doc);
+  return new Promise((resolve, reject) => {
+    canvas.toBlob(blob => (blob ? resolve(blob) : reject(new Error('Could not render image'))), 'image/png');
+  });
 }
