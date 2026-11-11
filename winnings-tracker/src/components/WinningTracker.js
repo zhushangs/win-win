@@ -259,6 +259,8 @@ export default function WinningTracker() {
   const [showAddForm, setShowAddForm] = useState(false);
   const [mainView, setMainView] = useState('cards'); // 'cards' = month cards, 'list' = every item of the year
   const [searchQuery, setSearchQuery] = useState('');
+  // PDF export of the list view: 'idle' | 'working' | 'ready' (file built, waiting for a tap to share)
+  const [pdfState, setPdfState] = useState({ status: 'idle', file: null });
   const [editing, setEditing] = useState(null);
   const [analysisRange, setAnalysisRange] = useState('month');
   const [expandedRows, setExpandedRows] = useState({}); // { category: name, platform: name } opened in Analysis
@@ -530,6 +532,91 @@ export default function WinningTracker() {
   const listTotal = listItems.reduce((s, w) => s + (Number(w.price) || 0), 0);
   const showList = isSearching || mainView === 'list';
 
+  // A prepared PDF is only valid for the list it was made from.
+  useEffect(() => {
+    setPdfState({ status: 'idle', file: null });
+  }, [searchText, selectedYear, mainView, winnings]);
+
+  // Open the share sheet (Save to Files, AirDrop, Mail, WeChat, Print...) where supported,
+  // otherwise download the file.
+  const shareOrDownload = async (file) => {
+    if (navigator.canShare && navigator.canShare({ files: [file] })) {
+      try {
+        await navigator.share({ files: [file], title: file.name });
+      } catch (e) {
+        if (e.name !== 'AbortError') throw e; // user closed the share sheet
+      }
+      return;
+    }
+    const url = URL.createObjectURL(file);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = file.name;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+  };
+
+  const handleSharePdf = async () => {
+    // Second tap after the browser blocked sharing (it needs a fresh tap after a slow build)
+    if (pdfState.status === 'ready' && pdfState.file) {
+      try {
+        await shareOrDownload(pdfState.file);
+        setPdfState({ status: 'idle', file: null });
+      } catch (e) {
+        alert(`Could not share PDF: ${e.message}`);
+      }
+      return;
+    }
+
+    setPdfState({ status: 'working', file: null });
+    try {
+      const { createWinningsPdf } = await import('../lib/pdfExport');
+      const query = searchQuery.trim();
+      const count = `${listItems.length} item${listItems.length === 1 ? '' : 's'}`;
+      const blob = await createWinningsPdf({
+        title: isSearching ? `Win Win — “${query}”` : `Win Win — ${selectedYear}`,
+        subtitle: isSearching
+          ? `${count} · $${listTotal.toFixed(2)} · in ${listMonths.length} month${listMonths.length === 1 ? '' : 's'} · all years`
+          : `${count} · $${listTotal.toFixed(2)}`,
+        generated: `Generated ${new Date().toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })}`,
+        months: listMonths.map(monthStr => {
+          const items = [...listByMonth[monthStr]]
+            .sort((a, b) => (b.date || '').localeCompare(a.date || '') || (b.id - a.id));
+          const subtotal = items.reduce((sum, w) => sum + (Number(w.price) || 0), 0);
+          return {
+            label: parseLocalDate(monthStr + '-01').toLocaleDateString(undefined, { month: 'long', year: 'numeric' }),
+            summary: `$${subtotal.toFixed(2)} · ${items.length} item${items.length === 1 ? '' : 's'}`,
+            items: items.map(w => ({
+              title: w.item,
+              price: `$${Number(w.price).toFixed(2)}`,
+              meta: [
+                parseLocalDate(w.date).toLocaleDateString(undefined, { month: 'short', day: 'numeric' }),
+                w.brand, w.category, w.platform
+              ].filter(Boolean).join('  •  ')
+            }))
+          };
+        })
+      });
+      const safeName = (isSearching ? query : String(selectedYear)).replace(/[\\/:*?"<>|\s]+/g, '-');
+      const file = new File([blob], `win-win-${safeName}.pdf`, { type: 'application/pdf' });
+      try {
+        await shareOrDownload(file);
+        setPdfState({ status: 'idle', file: null });
+      } catch (e) {
+        if (e.name === 'NotAllowedError') {
+          setPdfState({ status: 'ready', file }); // ask for one more tap
+        } else {
+          throw e;
+        }
+      }
+    } catch (e) {
+      alert(`Could not create PDF: ${e.message}`);
+      setPdfState({ status: 'idle', file: null });
+    }
+  };
+
   // Human-readable label for a whole-month range, e.g. "October 2026", "Oct – Dec 2026",
   // "Dec 2025 – Feb 2026".
   const formatMonthRange = (start, end) => {
@@ -741,6 +828,7 @@ export default function WinningTracker() {
             {showList ? (
               <div className="win-list">
                 <div className="win-list-summary">
+                  <div className="win-list-summary-text">
                   {isSearching ? (
                     <>
                       <span className="win-list-summary-title">“{searchQuery.trim()}”</span>
@@ -753,6 +841,17 @@ export default function WinningTracker() {
                       <span className="win-list-summary-title">{selectedYear}</span>
                       {' '}· {listItems.length} item{listItems.length === 1 ? '' : 's'} · ${listTotal.toFixed(2)}
                     </>
+                  )}
+                  </div>
+                  {listItems.length > 0 && (
+                    <button
+                      type="button"
+                      className={`share-pdf-btn ${pdfState.status === 'ready' ? 'ready' : ''}`}
+                      onClick={handleSharePdf}
+                      disabled={pdfState.status === 'working'}
+                    >
+                      {pdfState.status === 'working' ? 'Creating…' : pdfState.status === 'ready' ? 'Tap to share' : 'Share PDF'}
+                    </button>
                   )}
                 </div>
 

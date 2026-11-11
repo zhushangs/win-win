@@ -1019,6 +1019,10 @@
 
 /* Main tab: list view */
 .win-list-summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
   background-color: #fff;
   border: 1px solid #e2e8f0;
   border-radius: 10px;
@@ -1057,4 +1061,29 @@
   font-size: 13px;
   font-weight: 700;
   color: #7c3aed;
+}
+
+.win-list-summary-text {
+  min-width: 0;
+}
+
+.share-pdf-btn {
+  flex-shrink: 0;
+  border: none;
+  border-radius: 8px;
+  padding: 8px 12px;
+  background-color: #7c3aed;
+  color: #fff;
+  font-weight: 700;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.share-pdf-btn:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+.share-pdf-btn.ready {
+  background-color: #16a34a;
 }
