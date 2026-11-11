@@ -259,9 +259,9 @@ export default function WinningTracker() {
   const [showAddForm, setShowAddForm] = useState(false);
   const [mainView, setMainView] = useState('cards'); // 'cards' = month cards, 'list' = every item of the year
   const [searchQuery, setSearchQuery] = useState('');
-  // Export of the list view as 'image' or 'pdf'.
-  // status: 'idle' | 'working' | 'ready' (file built, waiting for one more tap to share)
-  const [exportState, setExportState] = useState({ status: 'idle', kind: null, file: null });
+  // Export preview of the list view: null when closed; { loading } while the image is built;
+  // then { imageUrl, imageFile, pdfFile } (pdfFile is null until the PDF is ready).
+  const [exportPreview, setExportPreview] = useState(null);
   const [editing, setEditing] = useState(null);
   const [analysisRange, setAnalysisRange] = useState('month');
   const [expandedRows, setExpandedRows] = useState({}); // { category: name, platform: name } opened in Analysis
@@ -533,11 +533,6 @@ export default function WinningTracker() {
   const listTotal = listItems.reduce((s, w) => s + (Number(w.price) || 0), 0);
   const showList = isSearching || mainView === 'list';
 
-  // A prepared file is only valid for the list it was made from.
-  useEffect(() => {
-    setExportState({ status: 'idle', kind: null, file: null });
-  }, [searchText, selectedYear, mainView, winnings]);
-
   // Open the share sheet (Save to Files, AirDrop, Mail, WeChat, Print...) where supported,
   // otherwise download the file.
   const shareOrDownload = async (file) => {
@@ -559,64 +554,73 @@ export default function WinningTracker() {
     setTimeout(() => URL.revokeObjectURL(url), 1000);
   };
 
-  const handleShare = async (kind) => {
-    // Second tap after the browser blocked sharing (it needs a fresh tap after a slow build)
-    if (exportState.status === 'ready' && exportState.kind === kind && exportState.file) {
-      try {
-        await shareOrDownload(exportState.file);
-        setExportState({ status: 'idle', kind: null, file: null });
-      } catch (e) {
-        alert(`Could not share: ${e.message}`);
-      }
-      return;
-    }
+  // Content of the exported image/PDF: the current list, oldest first.
+  const buildExportDoc = () => {
+    const query = searchQuery.trim();
+    const count = `${listItems.length} item${listItems.length === 1 ? '' : 's'}`;
+    return {
+      title: isSearching ? `Win Win — “${query}”` : `Win Win — ${selectedYear}`,
+      subtitle: isSearching
+        ? `${count} · $${listTotal.toFixed(2)} · in ${listMonths.length} month${listMonths.length === 1 ? '' : 's'} · all years`
+        : `${count} · $${listTotal.toFixed(2)}`,
+      generated: `Generated ${new Date().toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })}`,
+      // Start of the year to the end, and earliest item first within each month
+      months: [...listMonths].reverse().map(monthStr => {
+        const items = [...listByMonth[monthStr]]
+          .sort((a, b) => (a.date || '').localeCompare(b.date || '') || (a.id - b.id));
+        const subtotal = items.reduce((sum, w) => sum + (Number(w.price) || 0), 0);
+        return {
+          label: parseLocalDate(monthStr + '-01').toLocaleDateString(undefined, { month: 'long', year: 'numeric' }),
+          summary: `$${subtotal.toFixed(2)} · ${items.length} item${items.length === 1 ? '' : 's'}`,
+          items: items.map(w => ({
+            title: w.item,
+            price: `$${Number(w.price).toFixed(2)}`,
+            meta: [
+              parseLocalDate(w.date).toLocaleDateString(undefined, { month: 'short', day: 'numeric' }),
+              w.brand, w.category, w.platform
+            ].filter(Boolean).join('  •  ')
+          }))
+        };
+      })
+    };
+  };
 
-    setExportState({ status: 'working', kind, file: null });
+  // Build the image (shown as the preview) and then the PDF, so both are ready to share
+  // the moment a share button is tapped.
+  const openExportPreview = async () => {
+    setExportPreview({ loading: true });
     try {
       const { createWinningsPdf, createWinningsImage } = await import('../lib/pdfExport');
-      const query = searchQuery.trim();
-      const count = `${listItems.length} item${listItems.length === 1 ? '' : 's'}`;
-      const doc = {
-        title: isSearching ? `Win Win — “${query}”` : `Win Win — ${selectedYear}`,
-        subtitle: isSearching
-          ? `${count} · $${listTotal.toFixed(2)} · in ${listMonths.length} month${listMonths.length === 1 ? '' : 's'} · all years`
-          : `${count} · $${listTotal.toFixed(2)}`,
-        generated: `Generated ${new Date().toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })}`,
-        // Oldest first: start of the year to the end, and earliest item first within each month
-        months: [...listMonths].reverse().map(monthStr => {
-          const items = [...listByMonth[monthStr]]
-            .sort((a, b) => (a.date || '').localeCompare(b.date || '') || (a.id - b.id));
-          const subtotal = items.reduce((sum, w) => sum + (Number(w.price) || 0), 0);
-          return {
-            label: parseLocalDate(monthStr + '-01').toLocaleDateString(undefined, { month: 'long', year: 'numeric' }),
-            summary: `$${subtotal.toFixed(2)} · ${items.length} item${items.length === 1 ? '' : 's'}`,
-            items: items.map(w => ({
-              title: w.item,
-              price: `$${Number(w.price).toFixed(2)}`,
-              meta: [
-                parseLocalDate(w.date).toLocaleDateString(undefined, { month: 'short', day: 'numeric' }),
-                w.brand, w.category, w.platform
-              ].filter(Boolean).join('  •  ')
-            }))
-          };
-        })
-      };
-      const blob = kind === 'pdf' ? await createWinningsPdf(doc) : await createWinningsImage(doc);
-      const safeName = (isSearching ? query : String(selectedYear)).replace(/[\\/:*?"<>|\s]+/g, '-');
-      const file = new File([blob], `win-win-${safeName}.${kind === 'pdf' ? 'pdf' : 'png'}`, { type: blob.type });
-      try {
-        await shareOrDownload(file);
-        setExportState({ status: 'idle', kind: null, file: null });
-      } catch (e) {
-        if (e.name === 'NotAllowedError') {
-          setExportState({ status: 'ready', kind, file }); // ask for one more tap
-        } else {
-          throw e;
-        }
-      }
+      const doc = buildExportDoc();
+      const base = `win-win-${(isSearching ? searchQuery.trim() : String(selectedYear)).replace(/[\\/:*?"<>|\s]+/g, '-')}`;
+
+      const imageBlob = await createWinningsImage(doc);
+      const imageFile = new File([imageBlob], `${base}.png`, { type: 'image/png' });
+      const imageUrl = URL.createObjectURL(imageBlob);
+      setExportPreview({ imageUrl, imageFile, pdfFile: null });
+
+      const pdfBlob = await createWinningsPdf(doc);
+      const pdfFile = new File([pdfBlob], `${base}.pdf`, { type: 'application/pdf' });
+      // Only attach if this preview is still open
+      setExportPreview(prev => (prev && prev.imageUrl === imageUrl ? { ...prev, pdfFile } : prev));
     } catch (e) {
-      alert(`Could not create ${kind === 'pdf' ? 'PDF' : 'image'}: ${e.message}`);
-      setExportState({ status: 'idle', kind: null, file: null });
+      alert(`Could not create the export: ${e.message}`);
+      setExportPreview(null);
+    }
+  };
+
+  const closeExportPreview = () => {
+    if (exportPreview?.imageUrl) URL.revokeObjectURL(exportPreview.imageUrl);
+    setExportPreview(null);
+  };
+
+  const shareExportFile = async (file) => {
+    try {
+      await shareOrDownload(file);
+    } catch (e) {
+      alert(e.name === 'NotAllowedError'
+        ? 'Sharing was blocked by the browser. Please tap the button again.'
+        : `Could not share: ${e.message}`);
     }
   };
 
@@ -847,23 +851,14 @@ export default function WinningTracker() {
                   )}
                   </div>
                   {listItems.length > 0 && (
-                    <div className="share-buttons">
-                      {[['image', 'Share Image'], ['pdf', 'Share PDF']].map(([kind, label]) => {
-                        const mine = exportState.kind === kind;
-                        const ready = mine && exportState.status === 'ready';
-                        return (
-                          <button
-                            key={kind}
-                            type="button"
-                            className={`share-pdf-btn ${ready ? 'ready' : ''}`}
-                            onClick={() => handleShare(kind)}
-                            disabled={exportState.status === 'working'}
-                          >
-                            {mine && exportState.status === 'working' ? 'Creating…' : ready ? 'Tap to share' : label}
-                          </button>
-                        );
-                      })}
-                    </div>
+                    <button
+                      type="button"
+                      className="share-pdf-btn"
+                      onClick={openExportPreview}
+                      disabled={Boolean(exportPreview)}
+                    >
+                      Preview &amp; Share
+                    </button>
                   )}
                 </div>
 
@@ -1501,6 +1496,47 @@ export default function WinningTracker() {
                   Cancel
                 </button>
               </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {exportPreview && (
+        <div className="modal-overlay">
+          <div className="modal-content export-preview-modal">
+            <div className="modal-header">
+              <h2 className="modal-title">Preview</h2>
+              <button className="modal-close" aria-label="Close preview" onClick={closeExportPreview}>
+                ✕
+              </button>
+            </div>
+
+            <div className="export-preview-frame">
+              {exportPreview.imageUrl ? (
+                <img src={exportPreview.imageUrl} alt="Preview of the exported list" className="export-preview-image" />
+              ) : (
+                <div className="export-preview-loading">Creating preview…</div>
+              )}
+            </div>
+            <div className="export-preview-hint">Scroll to see everything. Image and PDF look the same.</div>
+
+            <div className="share-buttons">
+              <button
+                type="button"
+                className="share-pdf-btn"
+                disabled={!exportPreview.imageFile}
+                onClick={() => shareExportFile(exportPreview.imageFile)}
+              >
+                Share Image
+              </button>
+              <button
+                type="button"
+                className="share-pdf-btn"
+                disabled={!exportPreview.pdfFile}
+                onClick={() => shareExportFile(exportPreview.pdfFile)}
+              >
+                {exportPreview.imageFile && !exportPreview.pdfFile ? 'Preparing PDF…' : 'Share PDF'}
+              </button>
             </div>
           </div>
         </div>
