@@ -257,6 +257,8 @@ export default function WinningTracker() {
   const [storagePersistent, setStoragePersistent] = useState(null); // true | false | null (unknown)
   const [selectedYear, setSelectedYear] = useState(String(currentYear));
   const [showAddForm, setShowAddForm] = useState(false);
+  const [mainView, setMainView] = useState('cards'); // 'cards' = month cards, 'list' = every item of the year
+  const [searchQuery, setSearchQuery] = useState('');
   const [editing, setEditing] = useState(null);
   const [analysisRange, setAnalysisRange] = useState('month');
   const [expandedRows, setExpandedRows] = useState({}); // { category: name, platform: name } opened in Analysis
@@ -514,6 +516,20 @@ export default function WinningTracker() {
   const winningsForYear = filterByYear(winnings, selectedYear);
   const monthlyData = groupByMonth(winningsForYear);
 
+  // Main tab list view: search results across all years (brand or item name), or,
+  // with no search, every item of the selected year. Grouped by month, newest first.
+  const searchText = searchQuery.trim().toLowerCase();
+  const isSearching = searchText.length > 0;
+  const listItems = isSearching
+    ? winnings.filter(w =>
+        (w.brand || '').toLowerCase().includes(searchText) ||
+        (w.item || '').toLowerCase().includes(searchText))
+    : winningsForYear;
+  const listByMonth = groupByMonth(listItems);
+  const listMonths = Object.keys(listByMonth).sort().reverse();
+  const listTotal = listItems.reduce((s, w) => s + (Number(w.price) || 0), 0);
+  const showList = isSearching || mainView === 'list';
+
   // Human-readable label for a whole-month range, e.g. "October 2026", "Oct – Dec 2026",
   // "Dec 2025 – Feb 2026".
   const formatMonthRange = (start, end) => {
@@ -686,6 +702,99 @@ export default function WinningTracker() {
               {yearSelector}
             </div>
 
+            <div className="main-toolbar">
+              <div className="search-box">
+                <span className="search-icon" aria-hidden="true">🔍</span>
+                <input
+                  type="search"
+                  className="search-input"
+                  placeholder="Search brand or item"
+                  autoComplete="off"
+                  autoCorrect="off"
+                  value={searchQuery}
+                  onChange={e => setSearchQuery(e.target.value)}
+                />
+                {searchQuery && (
+                  <button type="button" className="search-clear" aria-label="Clear search" onClick={() => setSearchQuery('')}>
+                    ✕
+                  </button>
+                )}
+              </div>
+              <div className="view-toggle" role="group" aria-label="View">
+                <button
+                  type="button"
+                  className={`view-toggle-btn ${!isSearching && mainView === 'cards' ? 'active' : ''}`}
+                  onClick={() => { setMainView('cards'); setSearchQuery(''); }}
+                >
+                  Months
+                </button>
+                <button
+                  type="button"
+                  className={`view-toggle-btn ${!isSearching && mainView === 'list' ? 'active' : ''}`}
+                  onClick={() => { setMainView('list'); setSearchQuery(''); }}
+                >
+                  All {selectedYear}
+                </button>
+              </div>
+            </div>
+
+            {showList ? (
+              <div className="win-list">
+                <div className="win-list-summary">
+                  {isSearching ? (
+                    <>
+                      <span className="win-list-summary-title">“{searchQuery.trim()}”</span>
+                      {' '}· {listItems.length} item{listItems.length === 1 ? '' : 's'} · ${listTotal.toFixed(2)}
+                      {listMonths.length > 0 && <> · in {listMonths.length} month{listMonths.length === 1 ? '' : 's'}</>}
+                      <div className="win-list-note">Searching all years</div>
+                    </>
+                  ) : (
+                    <>
+                      <span className="win-list-summary-title">{selectedYear}</span>
+                      {' '}· {listItems.length} item{listItems.length === 1 ? '' : 's'} · ${listTotal.toFixed(2)}
+                    </>
+                  )}
+                </div>
+
+                {listMonths.length === 0 && (
+                  <div className="category-empty">
+                    {isSearching ? 'No brand or item matches your search' : `No winnings in ${selectedYear} yet`}
+                  </div>
+                )}
+
+                {listMonths.map(monthStr => {
+                  const items = [...listByMonth[monthStr]]
+                    .sort((a, b) => (b.date || '').localeCompare(a.date || '') || (b.id - a.id));
+                  const subtotal = items.reduce((s, w) => s + (Number(w.price) || 0), 0);
+                  return (
+                    <div key={monthStr} className="win-list-month">
+                      <div className="win-list-month-header">
+                        <span>{parseLocalDate(monthStr + '-01').toLocaleDateString(undefined, { month: 'long', year: 'numeric' })}</span>
+                        <span className="win-list-month-total">
+                          ${subtotal.toFixed(2)} · {items.length}
+                        </span>
+                      </div>
+                      {items.map(item => (
+                        <div key={String(item.id)} className="item-row">
+                          <div className="item-info">
+                            <div className="item-title">{item.item}</div>
+                            <div className="item-meta">
+                              {parseLocalDate(item.date).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })} • {item.brand} • {item.category} • {item.platform}
+                            </div>
+                          </div>
+                          <div className="item-actions">
+                            <span className="item-price">${Number(item.price).toFixed(2)}</span>
+                            <button className="icon-button" aria-label="Edit" onClick={() => setEditing(item)}>
+                              ✏️
+                            </button>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  );
+                })}
+              </div>
+            ) : (
             <div className="month-sticker-grid">
               {displayedMonths.map((monthStr, index) => {
                 const items = monthlyData[monthStr] || [];
@@ -748,6 +857,7 @@ export default function WinningTracker() {
                 </button>
               </div>
             </div>
+            )}
           </div>
         )}
 

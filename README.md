@@ -16,6 +16,10 @@ Open it on your phone and choose **Add to Home Screen** to use it like a native 
 ### Monthly overview
 Each month with winnings gets a color card showing its total value and item count. Switch years from the dropdown, and tap **Next** to add a new entry.
 
+### Search & full-year list
+- **Search** by brand or item name to see which months (across all years) you got it in, with item count and total value.
+- Switch between **Months** (cards) and **All {year}**, a list of every item in the selected year grouped by month with monthly subtotals.
+
 ### Month detail
 Tap a month to see every item in it, sorted by date, with its category, brand and platform. Edit or delete items from here, or add another one to that month.
 
