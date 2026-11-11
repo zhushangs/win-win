@@ -19,7 +19,7 @@ Each month with winnings gets a color card showing its total value and item coun
 ### Search & full-year list
 - **Search** by brand or item name to see which months (across all years) you got it in, with item count and total value.
 - Switch between **Months** (cards) and **All {year}**, a list of every item in the selected year grouped by month with monthly subtotals.
-- **Share PDF** turns the current list (the full year or your search results) into an A4 PDF and opens the share sheet — save to Files, AirDrop, Mail, print, or send it in a chat. On a computer it downloads the file.
+- **Share PDF** turns the current list (the full year or your search results) into a single-page PDF, oldest to newest, and opens the share sheet — save to Files, AirDrop, Mail, print, or send it in a chat. On a computer it downloads the file.
 
 ### Month detail
 Tap a month to see every item in it, sorted by date, with its category, brand and platform. Edit or delete items from here, or add another one to that month.

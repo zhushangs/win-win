@@ -581,9 +581,10 @@ export default function WinningTracker() {
           ? `${count} · $${listTotal.toFixed(2)} · in ${listMonths.length} month${listMonths.length === 1 ? '' : 's'} · all years`
           : `${count} · $${listTotal.toFixed(2)}`,
         generated: `Generated ${new Date().toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })}`,
-        months: listMonths.map(monthStr => {
+        // Oldest first: start of the year to the end, and earliest item first within each month
+        months: [...listMonths].reverse().map(monthStr => {
           const items = [...listByMonth[monthStr]]
-            .sort((a, b) => (b.date || '').localeCompare(a.date || '') || (b.id - a.id));
+            .sort((a, b) => (a.date || '').localeCompare(b.date || '') || (a.id - b.id));
           const subtotal = items.reduce((sum, w) => sum + (Number(w.price) || 0), 0);
           return {
             label: parseLocalDate(monthStr + '-01').toLocaleDateString(undefined, { month: 'long', year: 'numeric' }),
